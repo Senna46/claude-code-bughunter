@@ -6,7 +6,7 @@
 //   Claude may not fix all bugs or may introduce new issues.
 //   Only one fix generation runs at a time per PR.
 
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
 import { existsSync } from "fs";
 import { mkdir } from "fs/promises";
 import { join } from "path";
@@ -168,7 +168,6 @@ For each bug, make the necessary code changes to fix it. Commit messages are not
 
     const args = [
       "-p",
-      prompt,
       "--allowedTools",
       "Read,Edit,Bash(git diff *),Bash(git status *)",
     ];
@@ -182,17 +181,45 @@ For each bug, make the necessary code changes to fix it. Commit messages are not
       repoDir,
     });
 
-    try {
-      await execFileAsync("claude", args, {
+    // Pipe the prompt via stdin to avoid issues with special characters
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn("claude", args, {
         cwd: repoDir,
-        maxBuffer: 10 * 1024 * 1024,
+        stdio: ["pipe", "pipe", "pipe"],
         timeout: 10 * 60 * 1000, // 10 minutes for fixes
       });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
-      throw new Error(`claude -p fix generation failed: ${message}`);
-    }
+
+      let stderr = "";
+
+      child.stdout.on("data", () => {
+        // Consume stdout but don't need it
+      });
+
+      child.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      child.on("close", (code) => {
+        if (code !== 0) {
+          reject(
+            new Error(
+              `claude -p fix generation exited with code ${code}. stderr: ${stderr.substring(0, 500)}`
+            )
+          );
+          return;
+        }
+        resolve();
+      });
+
+      child.on("error", (error) => {
+        reject(
+          new Error(`claude -p fix generation failed: ${error.message}`)
+        );
+      });
+
+      child.stdin.write(prompt);
+      child.stdin.end();
+    });
   }
 
   // ============================================================

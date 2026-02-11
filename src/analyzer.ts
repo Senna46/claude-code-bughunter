@@ -4,9 +4,8 @@
 // Limitations: Depends on claude CLI being installed and authenticated.
 //   Large diffs may be truncated to stay within context limits.
 
-import { execFile } from "child_process";
+import { spawn } from "child_process";
 import { randomUUID } from "crypto";
-import { promisify } from "util";
 
 import { logger } from "./logger.js";
 import type {
@@ -15,8 +14,6 @@ import type {
   ClaudeAnalysisOutput,
   Config,
 } from "./types.js";
-
-const execFileAsync = promisify(execFile);
 
 // JSON schema for structured bug analysis output from claude -p
 const BUG_ANALYSIS_SCHEMA = JSON.stringify({
@@ -147,7 +144,6 @@ Identify all real bugs and return your findings as structured JSON.`;
   ): Promise<ClaudeAnalysisOutput> {
     const args = [
       "-p",
-      prompt,
       "--output-format",
       "json",
       "--json-schema",
@@ -160,24 +156,63 @@ Identify all real bugs and return your findings as structured JSON.`;
       args.push("--model", this.config.claudeModel);
     }
 
-    try {
-      const { stdout, stderr } = await execFileAsync("claude", args, {
-        maxBuffer: 10 * 1024 * 1024, // 10MB
+    // Pipe the prompt via stdin to avoid issues with large diffs
+    // containing special characters in CLI arguments
+    return new Promise<ClaudeAnalysisOutput>((resolve, reject) => {
+      const child = spawn("claude", args, {
+        stdio: ["pipe", "pipe", "pipe"],
         timeout: 5 * 60 * 1000, // 5 minutes
       });
 
-      if (stderr) {
-        logger.debug("claude -p stderr output.", { stderr: stderr.substring(0, 500) });
-      }
+      let stdout = "";
+      let stderr = "";
 
-      return this.parseClaudeJsonOutput(stdout);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `claude -p analysis failed. Ensure 'claude' CLI is installed and authenticated. Error: ${message}`
-      );
-    }
+      child.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      child.on("close", (code) => {
+        if (stderr) {
+          logger.debug("claude -p stderr output.", {
+            stderr: stderr.substring(0, 500),
+          });
+        }
+
+        if (code !== 0) {
+          reject(
+            new Error(
+              `claude -p exited with code ${code}. stderr: ${stderr.substring(0, 500)}`
+            )
+          );
+          return;
+        }
+
+        try {
+          const result = this.parseClaudeJsonOutput(stdout);
+          resolve(result);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          reject(new Error(`Failed to parse claude output: ${message}`));
+        }
+      });
+
+      child.on("error", (error) => {
+        reject(
+          new Error(
+            `claude -p analysis failed. Ensure 'claude' CLI is installed and authenticated. Error: ${error.message}`
+          )
+        );
+      });
+
+      // Write prompt to stdin and close it
+      child.stdin.write(prompt);
+      child.stdin.end();
+    });
   }
 
   // ============================================================
