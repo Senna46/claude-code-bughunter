@@ -13,6 +13,7 @@ interface CacheEntry<T> {
 
 const cache = new Map<string, CacheEntry<unknown>>();
 const pendingRequests = new Map<string, Promise<unknown>>();
+const MAX_CACHE_SIZE = 1000;
 
 // Bug: Race condition - check-then-act without synchronization
 const rateLimitMap = new Map<string, number[]>();
@@ -29,6 +30,7 @@ export function checkRateLimit(clientIp: string, config: RateLimitConfig): boole
   }
 
   if (validTimestamps.length >= config.maxRequests) {
+    rateLimitMap.set(clientIp, validTimestamps);
     return false;
   }
 
@@ -40,7 +42,12 @@ export function checkRateLimit(clientIp: string, config: RateLimitConfig): boole
 
 // Bug: Prototype pollution via user input
 export function mergeConfig(baseConfig: Record<string, unknown>, userInput: string): Record<string, unknown> {
-  const parsed = JSON.parse(userInput);
+  let parsed;
+  try {
+    parsed = JSON.parse(userInput);
+  } catch (error) {
+    throw new Error('Invalid JSON input');
+  }
   const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
 
   function sanitizeObject(obj: unknown): unknown {
@@ -52,7 +59,7 @@ export function mergeConfig(baseConfig: Record<string, unknown>, userInput: stri
       return obj.map(item => sanitizeObject(item));
     }
 
-    const sanitized: Record<string, unknown> = {};
+    const sanitized = Object.create(null);
     for (const key of Object.keys(obj)) {
       if (!dangerousKeys.includes(key)) {
         sanitized[key] = sanitizeObject((obj as Record<string, unknown>)[key]);
@@ -63,18 +70,22 @@ export function mergeConfig(baseConfig: Record<string, unknown>, userInput: stri
 
   const sanitized = sanitizeObject(parsed) as Record<string, unknown>;
 
+  const result = Object.create(null);
+  for (const key of Object.keys(baseConfig)) {
+    result[key] = baseConfig[key];
+  }
   for (const key of Object.keys(sanitized)) {
-    if (!dangerousKeys.includes(key)) {
-      baseConfig[key] = sanitized[key];
+    if (!dangerousKeys.includes(key) && Object.prototype.hasOwnProperty.call(sanitized, key)) {
+      result[key] = sanitized[key];
     }
   }
-  return baseConfig;
+  return result;
 }
 
 // Bug: ReDoS vulnerability - catastrophic backtracking regex
 export function validateEmail(email: string): boolean {
-  const emailRegex = /^[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
   if (email.length > 320) return false;
+  const emailRegex = /^[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
   return emailRegex.test(email);
 }
 
@@ -123,18 +134,34 @@ export async function getCached<T>(key: string, ttlMs: number, fetchFn: () => Pr
     }
   }
 
-  const promise = Promise.resolve(fetchFn()).then(
-    (data) => {
-      const expiresAt = Date.now() + ttlMs;
-      cache.set(key, { data, expiresAt });
-      pendingRequests.delete(key);
-      return data;
-    },
-    (error) => {
-      pendingRequests.delete(key);
-      throw error;
+  if (cache.size >= MAX_CACHE_SIZE) {
+    let oldestKey: string | undefined;
+    let oldestExpiry = Infinity;
+    for (const [k, v] of cache.entries()) {
+      if (v.expiresAt < oldestExpiry) {
+        oldestExpiry = v.expiresAt;
+        oldestKey = k;
+      }
     }
-  );
+    if (oldestKey) {
+      cache.delete(oldestKey);
+    }
+  }
+
+  const promise = Promise.resolve()
+    .then(() => fetchFn())
+    .then(
+      (data) => {
+        const expiresAt = Date.now() + ttlMs;
+        cache.set(key, { data, expiresAt });
+        pendingRequests.delete(key);
+        return data;
+      },
+      (error) => {
+        pendingRequests.delete(key);
+        throw error;
+      }
+    );
 
   pendingRequests.set(key, promise);
   return promise;
@@ -145,9 +172,16 @@ export function calculateOffset(page: number, pageSize: number): number {
   if (page < 0 || pageSize < 0) {
     throw new Error('Page and pageSize must be non-negative');
   }
+  if (!Number.isSafeInteger(page) || !Number.isSafeInteger(pageSize)) {
+    throw new Error('Page and pageSize must be safe integers');
+  }
   const offset = page * pageSize;
-  if (!Number.isSafeInteger(offset) || offset === Infinity) {
+  if (!Number.isSafeInteger(offset)) {
     throw new Error('Pagination offset exceeds safe integer range');
+  }
+  const MAX_REASONABLE_OFFSET = 1000000000;
+  if (offset > MAX_REASONABLE_OFFSET) {
+    throw new Error('Pagination offset exceeds reasonable limit');
   }
   return offset;
 }
@@ -155,16 +189,17 @@ export function calculateOffset(page: number, pageSize: number): number {
 // Bug: Path traversal - user input used directly in file path
 export function buildFilePath(baseDir: string, fileName: string): string {
   const path = require('path');
+  const normalizedBase = path.resolve(baseDir) + path.sep;
   const resolved = path.resolve(baseDir, fileName);
-  const normalizedBase = path.resolve(baseDir);
 
-  if (resolved === normalizedBase || resolved.startsWith(normalizedBase + path.sep)) {
-    const relPath = path.relative(normalizedBase, resolved);
-    if (relPath.startsWith('..') || path.isAbsolute(relPath)) {
-      throw new Error('Path traversal detected');
-    }
-    return resolved;
+  if (!resolved.startsWith(normalizedBase)) {
+    throw new Error('Path traversal detected');
   }
 
-  throw new Error('Path traversal detected');
+  const relPath = path.relative(normalizedBase, resolved);
+  if (relPath.startsWith('..') || path.isAbsolute(relPath)) {
+    throw new Error('Path traversal detected');
+  }
+
+  return resolved;
 }
