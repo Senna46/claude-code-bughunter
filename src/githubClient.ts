@@ -78,17 +78,44 @@ export class GitHubClient {
     }));
   }
 
-  async listOrgRepos(org: string): Promise<Array<{ owner: string; name: string }>> {
-    logger.debug("Listing repos for org.", { org });
+  async listOwnerRepos(owner: string): Promise<Array<{ owner: string; name: string }>> {
+    logger.debug("Listing repos for owner.", { owner });
 
     const repos: Array<{ owner: string; name: string }> = [];
-    for await (const response of this.octokit.paginate.iterator(
-      this.octokit.rest.repos.listForOrg,
-      { org, per_page: 100, type: "all" }
-    )) {
-      for (const repo of response.data) {
-        repos.push({ owner: org, name: repo.name });
+
+    // Try listing as a user first, then fall back to org
+    try {
+      for await (const response of this.octokit.paginate.iterator(
+        this.octokit.rest.repos.listForUser,
+        { username: owner, per_page: 100, type: "owner" }
+      )) {
+        for (const repo of response.data) {
+          repos.push({ owner, name: repo.name });
+        }
       }
+      logger.debug(`Found ${repos.length} repo(s) for user "${owner}".`);
+      return repos;
+    } catch (userError) {
+      logger.debug(`Failed to list repos as user "${owner}", trying as org...`, {
+        error: userError instanceof Error ? userError.message : String(userError),
+      });
+    }
+
+    // Fall back to org API
+    try {
+      for await (const response of this.octokit.paginate.iterator(
+        this.octokit.rest.repos.listForOrg,
+        { org: owner, per_page: 100, type: "all" }
+      )) {
+        for (const repo of response.data) {
+          repos.push({ owner, name: repo.name });
+        }
+      }
+      logger.debug(`Found ${repos.length} repo(s) for org "${owner}".`);
+    } catch (orgError) {
+      logger.error(`Failed to list repos for "${owner}" as both user and org.`, {
+        error: orgError instanceof Error ? orgError.message : String(orgError),
+      });
     }
 
     return repos;

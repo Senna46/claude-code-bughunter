@@ -11,7 +11,7 @@ Monitors open pull requests for new commits, analyzes diffs for potential bugs u
 - **PR summary updates**: Automatically updates PR description with risk assessment and change overview
 - **Inline review comments**: Posts structured bug findings as PR review comments with severity levels
 - **Autofix generation**: Generates bug fixes using Claude Code, committed to dedicated branches
-- **Approval workflow**: Users approve fixes via `@bughunter push <sha>` comments; fixes are cherry-picked to the PR branch
+- **Approval workflow**: Users approve fixes via `/bughunter push <sha>` comments; fixes are merged to the PR branch
 
 ## Prerequisites
 
@@ -48,7 +48,7 @@ Copy `.env.example` to `.env` and configure:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `BUGHUNTER_GITHUB_ORGS` | Yes* | - | Organizations to monitor (comma-separated) |
+| `BUGHUNTER_GITHUB_ORGS` | Yes* | - | GitHub owners to monitor: users or orgs (comma-separated) |
 | `BUGHUNTER_GITHUB_REPOS` | Yes* | - | Specific repos to monitor (`owner/repo`, comma-separated) |
 | `BUGHUNTER_POLL_INTERVAL` | No | `60` | Polling interval in seconds |
 | `BUGHUNTER_BOT_NAME` | No | `bughunter` | Bot mention name for approval commands |
@@ -71,7 +71,7 @@ Copy `.env.example` to `.env` and configure:
 6. Generate fixes via Claude Code in cloned repo
 7. Create fix branch, commit, push
 8. Post autofix comment with diff preview and push command
-9. Wait for user approval: @bughunter push <sha>
+9. Wait for user approval: /bughunter push <sha>
 10. Cherry-pick approved fix to PR branch
 11. Repeat
 ```

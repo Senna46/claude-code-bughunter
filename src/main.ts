@@ -342,7 +342,7 @@ class BugHunterDaemon {
 
     for (const org of this.config.githubOrgs) {
       try {
-        const repos = await this.github.listOrgRepos(org);
+        const repos = await this.github.listOwnerRepos(org);
         for (const repo of repos) {
           const repoKey = `${repo.owner}/${repo.name}`;
           if (processedRepos.has(repoKey)) continue;
