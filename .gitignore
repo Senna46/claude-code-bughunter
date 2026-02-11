@@ -1,0 +1,29 @@
+node_modules/
+dist/
+*.js.map
+*.d.ts
+
+# Environment
+.env
+.env.local
+
+# State
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Work directory (cloned repos)
+.bughunter-work/
