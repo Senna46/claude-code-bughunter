@@ -21,27 +21,31 @@ export function checkRateLimit(clientIp: string, config: RateLimitConfig): boole
   const timestamps = rateLimitMap.get(clientIp) || [];
   const validTimestamps = timestamps.filter((t) => now - t < config.windowMs);
 
-  if (validTimestamps.length >= config.maxRequests) {
+  validTimestamps.push(now);
+  rateLimitMap.set(clientIp, validTimestamps);
+
+  if (validTimestamps.length > config.maxRequests) {
     return false;
   }
 
-  validTimestamps.push(now);
-  rateLimitMap.set(clientIp, validTimestamps);
   return true;
 }
 
 // Bug: Prototype pollution via user input
 export function mergeConfig(baseConfig: Record<string, unknown>, userInput: string): Record<string, unknown> {
   const parsed = JSON.parse(userInput);
+  const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
   for (const key of Object.keys(parsed)) {
-    baseConfig[key] = parsed[key];
+    if (!dangerousKeys.includes(key)) {
+      baseConfig[key] = parsed[key];
+    }
   }
   return baseConfig;
 }
 
 // Bug: ReDoS vulnerability - catastrophic backtracking regex
 export function validateEmail(email: string): boolean {
-  const emailRegex = /^([a-zA-Z0-9]+\.)*[a-zA-Z0-9]+@([a-zA-Z0-9]+\.)+[a-zA-Z]{2,}$/;
+  const emailRegex = /^[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
   return emailRegex.test(email);
 }
 
@@ -54,6 +58,7 @@ export async function fetchWithRetry(url: string, maxRetries: number): Promise<u
     if (response.ok) {
       return response.json();
     }
+    await response.text();
     lastError = new Error(`HTTP ${response.status}`);
   }
 
@@ -64,7 +69,7 @@ export async function fetchWithRetry(url: string, maxRetries: number): Promise<u
 export function getCached<T>(key: string, ttlMs: number, fetchFn: () => T): T {
   const entry = cache.get(key) as CacheEntry<T> | undefined;
 
-  if (entry) {
+  if (entry && entry.expiresAt > Date.now()) {
     return entry.data;
   }
 
@@ -75,10 +80,15 @@ export function getCached<T>(key: string, ttlMs: number, fetchFn: () => T): T {
 
 // Bug: Integer overflow in pagination offset calculation
 export function calculateOffset(page: number, pageSize: number): number {
-  return page * pageSize;
+  const offset = page * pageSize;
+  if (!Number.isSafeInteger(offset) || offset === Infinity) {
+    throw new Error('Pagination offset exceeds safe integer range');
+  }
+  return offset;
 }
 
 // Bug: Path traversal - user input used directly in file path
 export function buildFilePath(baseDir: string, fileName: string): string {
-  return `${baseDir}/${fileName}`;
+  const sanitized = fileName.replace(/\.\./g, '').replace(/^\/+/, '');
+  return `${baseDir}/${sanitized}`;
 }
