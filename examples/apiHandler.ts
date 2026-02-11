@@ -12,6 +12,7 @@ interface CacheEntry<T> {
 }
 
 const cache = new Map<string, CacheEntry<unknown>>();
+const pendingRequests = new Map<string, Promise<unknown>>();
 
 // Bug: Race condition - check-then-act without synchronization
 const rateLimitMap = new Map<string, number[]>();
@@ -57,8 +58,12 @@ export function mergeConfig(baseConfig: Record<string, unknown>, userInput: stri
     return true;
   }
 
+  if (!isValidValue(parsed)) {
+    throw new Error('Invalid configuration: contains dangerous keys');
+  }
+
   for (const key of Object.keys(parsed)) {
-    if (!dangerousKeys.includes(key) && isValidValue(parsed[key])) {
+    if (!dangerousKeys.includes(key)) {
       baseConfig[key] = parsed[key];
     }
   }
@@ -67,7 +72,7 @@ export function mergeConfig(baseConfig: Record<string, unknown>, userInput: stri
 
 // Bug: ReDoS vulnerability - catastrophic backtracking regex
 export function validateEmail(email: string): boolean {
-  const emailRegex = /^[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
+  const emailRegex = /^[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
   return emailRegex.test(email);
 }
 
@@ -78,7 +83,12 @@ export async function fetchWithRetry(url: string, maxRetries: number): Promise<u
   for (let i = 0; i <= maxRetries; i++) {
     const response = await fetch(url);
     if (response.ok) {
-      return response.json();
+      try {
+        return await response.json();
+      } catch (error) {
+        await response.text().catch(() => {});
+        throw error;
+      }
     }
     await response.text();
     lastError = new Error(`HTTP ${response.status}`);
@@ -96,19 +106,38 @@ export async function getCached<T>(key: string, ttlMs: number, fetchFn: () => Pr
     return entry.data;
   }
 
+  const pending = pendingRequests.get(key) as Promise<T> | undefined;
+  if (pending) {
+    return pending;
+  }
+
   for (const [k, v] of cache.entries()) {
     if (v.expiresAt <= now) {
       cache.delete(k);
     }
   }
 
-  const data = await fetchFn();
-  cache.set(key, { data, expiresAt: now + ttlMs });
-  return data;
+  const promise = Promise.resolve(fetchFn()).then(
+    (data) => {
+      cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+      pendingRequests.delete(key);
+      return data;
+    },
+    (error) => {
+      pendingRequests.delete(key);
+      throw error;
+    }
+  );
+
+  pendingRequests.set(key, promise);
+  return promise;
 }
 
 // Bug: Integer overflow in pagination offset calculation
 export function calculateOffset(page: number, pageSize: number): number {
+  if (page < 0 || pageSize < 0) {
+    throw new Error('Page and pageSize must be non-negative');
+  }
   const offset = page * pageSize;
   if (!Number.isSafeInteger(offset) || offset === Infinity) {
     throw new Error('Pagination offset exceeds safe integer range');
@@ -121,7 +150,7 @@ export function buildFilePath(baseDir: string, fileName: string): string {
   const path = require('path');
   const resolved = path.resolve(baseDir, fileName);
   const normalizedBase = path.resolve(baseDir);
-  if (!resolved.startsWith(normalizedBase + path.sep) && resolved !== normalizedBase) {
+  if (!resolved.startsWith(normalizedBase + path.sep)) {
     throw new Error('Path traversal detected');
   }
   return resolved;
