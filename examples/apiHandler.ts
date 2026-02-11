@@ -21,13 +21,19 @@ export function checkRateLimit(clientIp: string, config: RateLimitConfig): boole
   const timestamps = rateLimitMap.get(clientIp) || [];
   const validTimestamps = timestamps.filter((t) => now - t < config.windowMs);
 
-  validTimestamps.push(now);
-  rateLimitMap.set(clientIp, validTimestamps);
+  for (const [ip, ts] of rateLimitMap.entries()) {
+    if (ts.length === 0 || ts.every((t) => now - t >= config.windowMs)) {
+      rateLimitMap.delete(ip);
+    }
+  }
 
-  if (validTimestamps.length > config.maxRequests) {
+  if (validTimestamps.length >= config.maxRequests) {
+    rateLimitMap.set(clientIp, validTimestamps);
     return false;
   }
 
+  validTimestamps.push(now);
+  rateLimitMap.set(clientIp, validTimestamps);
   return true;
 }
 
@@ -35,8 +41,24 @@ export function checkRateLimit(clientIp: string, config: RateLimitConfig): boole
 export function mergeConfig(baseConfig: Record<string, unknown>, userInput: string): Record<string, unknown> {
   const parsed = JSON.parse(userInput);
   const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
+
+  function isValidValue(obj: unknown): boolean {
+    if (obj === null || typeof obj !== 'object') {
+      return true;
+    }
+    for (const key of Object.keys(obj)) {
+      if (dangerousKeys.includes(key)) {
+        return false;
+      }
+      if (!isValidValue((obj as Record<string, unknown>)[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   for (const key of Object.keys(parsed)) {
-    if (!dangerousKeys.includes(key)) {
+    if (!dangerousKeys.includes(key) && isValidValue(parsed[key])) {
       baseConfig[key] = parsed[key];
     }
   }
@@ -45,13 +67,13 @@ export function mergeConfig(baseConfig: Record<string, unknown>, userInput: stri
 
 // Bug: ReDoS vulnerability - catastrophic backtracking regex
 export function validateEmail(email: string): boolean {
-  const emailRegex = /^[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
+  const emailRegex = /^[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
   return emailRegex.test(email);
 }
 
 // Bug: Unclosed resource - response body never consumed on error
 export async function fetchWithRetry(url: string, maxRetries: number): Promise<unknown> {
-  let lastError: Error | null = null;
+  let lastError: Error = new Error('Fetch failed with no retries');
 
   for (let i = 0; i <= maxRetries; i++) {
     const response = await fetch(url);
@@ -66,15 +88,22 @@ export async function fetchWithRetry(url: string, maxRetries: number): Promise<u
 }
 
 // Bug: Cache entry can serve stale data due to missing expiry check at read time
-export function getCached<T>(key: string, ttlMs: number, fetchFn: () => T): T {
+export async function getCached<T>(key: string, ttlMs: number, fetchFn: () => Promise<T> | T): Promise<T> {
+  const now = Date.now();
   const entry = cache.get(key) as CacheEntry<T> | undefined;
 
-  if (entry && entry.expiresAt > Date.now()) {
+  if (entry && entry.expiresAt > now) {
     return entry.data;
   }
 
-  const data = fetchFn();
-  cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+  for (const [k, v] of cache.entries()) {
+    if (v.expiresAt <= now) {
+      cache.delete(k);
+    }
+  }
+
+  const data = await fetchFn();
+  cache.set(key, { data, expiresAt: now + ttlMs });
   return data;
 }
 
@@ -89,6 +118,11 @@ export function calculateOffset(page: number, pageSize: number): number {
 
 // Bug: Path traversal - user input used directly in file path
 export function buildFilePath(baseDir: string, fileName: string): string {
-  const sanitized = fileName.replace(/\.\./g, '').replace(/^\/+/, '');
-  return `${baseDir}/${sanitized}`;
+  const path = require('path');
+  const resolved = path.resolve(baseDir, fileName);
+  const normalizedBase = path.resolve(baseDir);
+  if (!resolved.startsWith(normalizedBase + path.sep) && resolved !== normalizedBase) {
+    throw new Error('Path traversal detected');
+  }
+  return resolved;
 }
