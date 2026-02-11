@@ -338,6 +338,50 @@ export class GitHubClient {
   }
 
   // ============================================================
+  // Commit Status (for PR status indicators)
+  // ============================================================
+
+  async createCommitStatus(
+    owner: string,
+    repo: string,
+    sha: string,
+    state: "error" | "failure" | "pending" | "success",
+    description: string,
+    context: string = "Claude Code BugHunter"
+  ): Promise<void> {
+    logger.debug("Creating commit status.", {
+      owner,
+      repo,
+      sha: sha.substring(0, 10),
+      state,
+      description,
+      context,
+    });
+
+    try {
+      await this.octokit.rest.repos.createCommitStatus({
+        owner,
+        repo,
+        sha,
+        state,
+        description,
+        context,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      // Non-critical: log and continue (don't block the main workflow)
+      logger.warn("Failed to create commit status.", {
+        owner,
+        repo,
+        sha: sha.substring(0, 10),
+        state,
+        error: message,
+      });
+    }
+  }
+
+  // ============================================================
   // Merge / Cherry-pick via API (merge commit approach)
   // ============================================================
 

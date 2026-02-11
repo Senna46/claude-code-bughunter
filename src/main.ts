@@ -183,6 +183,15 @@ class BugHunterDaemon {
       { newCommits: newCommitShas.length, latestCommitSha }
     );
 
+    // Set commit status to pending (yellow indicator)
+    await this.github.createCommitStatus(
+      pr.owner,
+      pr.repo,
+      pr.headSha,
+      "pending",
+      "Analyzing for bugs..."
+    );
+
     try {
       // 1. Get the full diff
       const diff = await this.github.getPullRequestDiff(
@@ -253,6 +262,24 @@ class BugHunterDaemon {
             this.config.botName
           );
         }
+
+        // Set commit status to error (grey indicator) - bugs found
+        await this.github.createCommitStatus(
+          pr.owner,
+          pr.repo,
+          pr.headSha,
+          "error",
+          `Found ${analysis.bugs.length} bug(s)`
+        );
+      } else {
+        // Set commit status to success (green indicator) - no bugs
+        await this.github.createCommitStatus(
+          pr.owner,
+          pr.repo,
+          pr.headSha,
+          "success",
+          "No bugs found"
+        );
       }
 
       logger.info(
@@ -268,6 +295,15 @@ class BugHunterDaemon {
       logger.error(
         `Error processing PR #${pr.number} in ${repoFullName}.`,
         { error: message }
+      );
+
+      // Set commit status to error (grey indicator) - analysis failed
+      await this.github.createCommitStatus(
+        pr.owner,
+        pr.repo,
+        pr.headSha,
+        "error",
+        "Analysis failed"
       );
     }
   }
