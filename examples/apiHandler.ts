@@ -28,13 +28,13 @@ export function checkRateLimit(clientIp: string, config: RateLimitConfig): boole
     }
   }
 
-  if (validTimestamps.length >= config.maxRequests) {
-    rateLimitMap.set(clientIp, validTimestamps);
+  validTimestamps.push(now);
+  rateLimitMap.set(clientIp, validTimestamps);
+
+  if (validTimestamps.length > config.maxRequests) {
     return false;
   }
 
-  validTimestamps.push(now);
-  rateLimitMap.set(clientIp, validTimestamps);
   return true;
 }
 
@@ -43,28 +43,29 @@ export function mergeConfig(baseConfig: Record<string, unknown>, userInput: stri
   const parsed = JSON.parse(userInput);
   const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
 
-  function isValidValue(obj: unknown): boolean {
+  function sanitizeObject(obj: unknown): unknown {
     if (obj === null || typeof obj !== 'object') {
-      return true;
+      return obj;
     }
+
+    if (Array.isArray(obj)) {
+      return obj.map(item => sanitizeObject(item));
+    }
+
+    const sanitized: Record<string, unknown> = {};
     for (const key of Object.keys(obj)) {
-      if (dangerousKeys.includes(key)) {
-        return false;
-      }
-      if (!isValidValue((obj as Record<string, unknown>)[key])) {
-        return false;
+      if (!dangerousKeys.includes(key)) {
+        sanitized[key] = sanitizeObject((obj as Record<string, unknown>)[key]);
       }
     }
-    return true;
+    return sanitized;
   }
 
-  if (!isValidValue(parsed)) {
-    throw new Error('Invalid configuration: contains dangerous keys');
-  }
+  const sanitized = sanitizeObject(parsed) as Record<string, unknown>;
 
-  for (const key of Object.keys(parsed)) {
+  for (const key of Object.keys(sanitized)) {
     if (!dangerousKeys.includes(key)) {
-      baseConfig[key] = parsed[key];
+      baseConfig[key] = sanitized[key];
     }
   }
   return baseConfig;
@@ -72,7 +73,8 @@ export function mergeConfig(baseConfig: Record<string, unknown>, userInput: stri
 
 // Bug: ReDoS vulnerability - catastrophic backtracking regex
 export function validateEmail(email: string): boolean {
-  const emailRegex = /^[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
+  const emailRegex = /^[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
+  if (email.length > 320) return false;
   return emailRegex.test(email);
 }
 
@@ -92,6 +94,10 @@ export async function fetchWithRetry(url: string, maxRetries: number): Promise<u
     }
     await response.text();
     lastError = new Error(`HTTP ${response.status}`);
+
+    if (i < maxRetries) {
+      await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, i), 10000)));
+    }
   }
 
   throw lastError;
@@ -117,9 +123,11 @@ export async function getCached<T>(key: string, ttlMs: number, fetchFn: () => Pr
     }
   }
 
+  const fetchStartTime = Date.now();
   const promise = Promise.resolve(fetchFn()).then(
     (data) => {
-      cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+      const expiresAt = fetchStartTime + ttlMs;
+      cache.set(key, { data, expiresAt });
       pendingRequests.delete(key);
       return data;
     },
@@ -150,8 +158,15 @@ export function buildFilePath(baseDir: string, fileName: string): string {
   const path = require('path');
   const resolved = path.resolve(baseDir, fileName);
   const normalizedBase = path.resolve(baseDir);
-  if (!resolved.startsWith(normalizedBase + path.sep)) {
+
+  if (resolved !== normalizedBase && !resolved.startsWith(normalizedBase + path.sep)) {
     throw new Error('Path traversal detected');
   }
+
+  const relPath = path.relative(normalizedBase, resolved);
+  if (relPath.startsWith('..') || path.isAbsolute(relPath)) {
+    throw new Error('Path traversal detected');
+  }
+
   return resolved;
 }
