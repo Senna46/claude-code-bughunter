@@ -28,12 +28,12 @@ export function checkRateLimit(clientIp: string, config: RateLimitConfig): boole
     }
   }
 
-  validTimestamps.push(now);
-  rateLimitMap.set(clientIp, validTimestamps);
-
-  if (validTimestamps.length > config.maxRequests) {
+  if (validTimestamps.length >= config.maxRequests) {
     return false;
   }
+
+  validTimestamps.push(now);
+  rateLimitMap.set(clientIp, validTimestamps);
 
   return true;
 }
@@ -73,7 +73,7 @@ export function mergeConfig(baseConfig: Record<string, unknown>, userInput: stri
 
 // Bug: ReDoS vulnerability - catastrophic backtracking regex
 export function validateEmail(email: string): boolean {
-  const emailRegex = /^[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
+  const emailRegex = /^[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*@[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
   if (email.length > 320) return false;
   return emailRegex.test(email);
 }
@@ -92,7 +92,7 @@ export async function fetchWithRetry(url: string, maxRetries: number): Promise<u
         throw error;
       }
     }
-    await response.text();
+    await response.text().catch(() => {});
     lastError = new Error(`HTTP ${response.status}`);
 
     if (i < maxRetries) {
@@ -123,10 +123,9 @@ export async function getCached<T>(key: string, ttlMs: number, fetchFn: () => Pr
     }
   }
 
-  const fetchStartTime = Date.now();
   const promise = Promise.resolve(fetchFn()).then(
     (data) => {
-      const expiresAt = fetchStartTime + ttlMs;
+      const expiresAt = Date.now() + ttlMs;
       cache.set(key, { data, expiresAt });
       pendingRequests.delete(key);
       return data;
@@ -159,14 +158,13 @@ export function buildFilePath(baseDir: string, fileName: string): string {
   const resolved = path.resolve(baseDir, fileName);
   const normalizedBase = path.resolve(baseDir);
 
-  if (resolved !== normalizedBase && !resolved.startsWith(normalizedBase + path.sep)) {
-    throw new Error('Path traversal detected');
+  if (resolved === normalizedBase || resolved.startsWith(normalizedBase + path.sep)) {
+    const relPath = path.relative(normalizedBase, resolved);
+    if (relPath.startsWith('..') || path.isAbsolute(relPath)) {
+      throw new Error('Path traversal detected');
+    }
+    return resolved;
   }
 
-  const relPath = path.relative(normalizedBase, resolved);
-  if (relPath.startsWith('..') || path.isAbsolute(relPath)) {
-    throw new Error('Path traversal detected');
-  }
-
-  return resolved;
+  throw new Error('Path traversal detected');
 }
