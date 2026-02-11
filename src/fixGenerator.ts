@@ -94,6 +94,82 @@ export class FixGenerator {
   }
 
   // ============================================================
+  // Commit mode: fix bugs directly on the PR's head branch
+  // ============================================================
+
+  async generateFixesDirectCommit(
+    pr: PullRequest,
+    bugs: Bug[]
+  ): Promise<FixResult | null> {
+    if (bugs.length === 0) {
+      logger.info("No bugs to fix.");
+      return null;
+    }
+
+    const repoDir = await this.ensureRepoClone(pr);
+
+    try {
+      // Checkout PR's head branch directly (no fix branch)
+      await this.execGit(repoDir, ["fetch", "--all", "--prune"]);
+      await this.execGit(repoDir, ["checkout", `origin/${pr.headRef}`]);
+      // Ensure we're on a local tracking branch
+      try {
+        await this.execGit(repoDir, ["checkout", pr.headRef]);
+        await this.execGit(repoDir, ["reset", "--hard", `origin/${pr.headRef}`]);
+      } catch {
+        // Branch might not exist locally yet
+        await this.execGit(repoDir, ["checkout", "-b", pr.headRef, `origin/${pr.headRef}`]);
+      }
+
+      // Run claude -p to fix bugs
+      await this.runClaudeFix(repoDir, bugs);
+
+      // Check if there are actual changes
+      const hasChanges = await this.hasUncommittedChanges(repoDir);
+      if (!hasChanges) {
+        logger.info("Claude did not make any changes. No fix to commit.");
+        return null;
+      }
+
+      // Commit and push directly to the PR's head branch
+      const commitSha = await this.commitAndPush(repoDir, pr.headRef, bugs);
+
+      // Get the diff (compare the commit with its parent)
+      const diff = await this.getDiffFromLastCommit(repoDir);
+
+      const fixedBugs = bugs.map((bug) => ({
+        bugId: bug.id,
+        title: bug.title,
+        description: bug.description,
+      }));
+
+      logger.info("Direct commit fix complete.", {
+        branch: pr.headRef,
+        commitSha: commitSha.substring(0, 10),
+        fixedBugCount: fixedBugs.length,
+      });
+
+      return {
+        branchName: pr.headRef,
+        commitSha,
+        diff,
+        fixedBugs,
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      logger.error("Direct commit fix generation failed.", {
+        owner: pr.owner,
+        repo: pr.repo,
+        prNumber: pr.number,
+        branch: pr.headRef,
+        error: message,
+      });
+      return null;
+    }
+  }
+
+  // ============================================================
   // Repository cloning and management
   // ============================================================
 
@@ -271,6 +347,15 @@ For each bug, make the necessary code changes to fix it. Commit messages are not
       ]);
     } catch {
       logger.warn("Failed to get diff between branches.");
+      return "(diff unavailable)";
+    }
+  }
+
+  private async getDiffFromLastCommit(repoDir: string): Promise<string> {
+    try {
+      return await this.execGit(repoDir, ["diff", "HEAD~1", "HEAD"]);
+    } catch {
+      logger.warn("Failed to get diff from last commit.");
       return "(diff unavailable)";
     }
   }

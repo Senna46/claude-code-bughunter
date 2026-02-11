@@ -6,9 +6,10 @@ import { config as dotenvConfig } from "dotenv";
 import { homedir } from "os";
 import { join } from "path";
 
-import type { Config, LogLevel } from "./types.js";
+import type { AutofixMode, Config, LogLevel } from "./types.js";
 
 const VALID_LOG_LEVELS: LogLevel[] = ["debug", "info", "warn", "error"];
+const VALID_AUTOFIX_MODES: AutofixMode[] = ["off", "branch", "commit", "pr"];
 
 export function loadConfig(): Config {
   dotenvConfig();
@@ -27,6 +28,7 @@ export function loadConfig(): Config {
     60
   );
   const botName = process.env.BUGHUNTER_BOT_NAME?.trim() || "bughunter";
+  const autofixMode = parseAutofixMode(process.env.BUGHUNTER_AUTOFIX_MODE);
   const defaultWorkDir = join(homedir(), ".bughunter", "repos");
   const workDir = process.env.BUGHUNTER_WORK_DIR?.trim() || defaultWorkDir;
   const maxDiffSize = parsePositiveInt(
@@ -43,6 +45,7 @@ export function loadConfig(): Config {
     githubRepos,
     pollInterval,
     botName,
+    autofixMode,
     workDir,
     maxDiffSize,
     claudeModel,
@@ -75,6 +78,16 @@ function parsePositiveInt(
     );
   }
   return parsed;
+}
+
+function parseAutofixMode(value: string | undefined): AutofixMode {
+  const mode = (value?.trim().toLowerCase() || "branch") as AutofixMode;
+  if (!VALID_AUTOFIX_MODES.includes(mode)) {
+    throw new Error(
+      `Configuration error: Invalid autofix mode "${value}". Valid modes: ${VALID_AUTOFIX_MODES.join(", ")}`
+    );
+  }
+  return mode;
 }
 
 function parseLogLevel(value: string | undefined): LogLevel {

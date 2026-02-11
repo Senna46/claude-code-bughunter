@@ -51,7 +51,8 @@ Copy `.env.example` to `.env` and configure:
 | `BUGHUNTER_GITHUB_ORGS` | Yes* | - | GitHub owners to monitor: users or orgs (comma-separated) |
 | `BUGHUNTER_GITHUB_REPOS` | Yes* | - | Specific repos to monitor (`owner/repo`, comma-separated) |
 | `BUGHUNTER_POLL_INTERVAL` | No | `60` | Polling interval in seconds |
-| `BUGHUNTER_BOT_NAME` | No | `bughunter` | Bot mention name for approval commands |
+| `BUGHUNTER_BOT_NAME` | No | `bughunter` | Bot name for approval commands |
+| `BUGHUNTER_AUTOFIX_MODE` | No | `branch` | Autofix mode: `off`, `branch`, `commit`, `pr` |
 | `BUGHUNTER_WORK_DIR` | No | `~/.bughunter/repos` | Directory for cloning repositories |
 | `BUGHUNTER_MAX_DIFF_SIZE` | No | `100000` | Max diff size (chars) to analyze |
 | `BUGHUNTER_CLAUDE_MODEL` | No | CLI default | Claude model to use |

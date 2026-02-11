@@ -11,6 +11,7 @@ export interface Config {
   githubRepos: string[];
   pollInterval: number;
   botName: string;
+  autofixMode: AutofixMode;
   workDir: string;
   maxDiffSize: number;
   claudeModel: string | null;
@@ -19,6 +20,13 @@ export interface Config {
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
+
+// Autofix mode: controls how BugHunter handles generated fixes
+//   off    - Bug detection only, no fix generation
+//   branch - Create a fix branch, post autofix comment, wait for approval (default)
+//   commit - Commit fixes directly to the PR's head branch
+//   pr     - Create a fix branch and automatically open a new PR
+export type AutofixMode = "off" | "branch" | "commit" | "pr";
 
 // ============================================================
 // GitHub PR Data

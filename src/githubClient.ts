@@ -365,6 +365,41 @@ export class GitHubClient {
   }
 
   // ============================================================
+  // Pull Request creation (for "pr" autofix mode)
+  // ============================================================
+
+  async createPullRequest(
+    owner: string,
+    repo: string,
+    head: string,
+    base: string,
+    title: string,
+    body: string
+  ): Promise<{ number: number; htmlUrl: string }> {
+    logger.debug("Creating pull request.", {
+      owner,
+      repo,
+      head,
+      base,
+      title,
+    });
+
+    const { data } = await this.octokit.rest.pulls.create({
+      owner,
+      repo,
+      head,
+      base,
+      title,
+      body,
+    });
+
+    return {
+      number: data.number,
+      htmlUrl: data.html_url,
+    };
+  }
+
+  // ============================================================
   // Commit Status (for PR status indicators)
   // ============================================================
 

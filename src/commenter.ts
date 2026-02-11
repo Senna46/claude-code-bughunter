@@ -272,6 +272,64 @@ ${bugSections}`;
     return commentId;
   }
 
+  // ============================================================
+  // Direct Commit Comment (for "commit" autofix mode)
+  // ============================================================
+
+  async postDirectCommitComment(
+    pr: PullRequest,
+    fixResult: FixResult
+  ): Promise<number> {
+    logger.info("Posting direct commit comment.", {
+      owner: pr.owner,
+      repo: pr.repo,
+      prNumber: pr.number,
+      fixedBugCount: fixResult.fixedBugs.length,
+    });
+
+    const body = this.buildDirectCommitCommentBody(pr, fixResult);
+    const commentId = await this.github.createIssueComment(
+      pr.owner,
+      pr.repo,
+      pr.number,
+      body
+    );
+
+    return commentId;
+  }
+
+  // ============================================================
+  // Fix PR Comment (for "pr" autofix mode)
+  // ============================================================
+
+  async postFixPrComment(
+    pr: PullRequest,
+    fixResult: FixResult,
+    fixPrNumber: number,
+    fixPrUrl: string
+  ): Promise<number> {
+    logger.info("Posting fix PR comment.", {
+      owner: pr.owner,
+      repo: pr.repo,
+      prNumber: pr.number,
+      fixPrNumber,
+    });
+
+    const body = this.buildFixPrCommentBody(pr, fixResult, fixPrNumber, fixPrUrl);
+    const commentId = await this.github.createIssueComment(
+      pr.owner,
+      pr.repo,
+      pr.number,
+      body
+    );
+
+    return commentId;
+  }
+
+  // ============================================================
+  // Comment body builders
+  // ============================================================
+
   private buildAutofixCommentBody(
     pr: PullRequest,
     fixResult: FixResult,
@@ -306,6 +364,66 @@ Or push these changes by commenting:
 \`\`\`
 
 <details><summary>Preview (${pr.owner}/${pr.repo}@${commitShort})</summary>
+
+\`\`\`diff
+${diffPreview}
+\`\`\`
+
+</details>
+`;
+  }
+
+  private buildDirectCommitCommentBody(
+    pr: PullRequest,
+    fixResult: FixResult
+  ): string {
+    const commitShort = fixResult.commitSha.substring(0, 10);
+
+    const fixedList = fixResult.fixedBugs
+      .map((fb) => `- :white_check_mark: Fixed: **${fb.title}**\n  - ${fb.description}`)
+      .join("\n");
+
+    const diffPreview = fixResult.diff.length > 10000
+      ? fixResult.diff.substring(0, 10000) + "\n... diff truncated ..."
+      : fixResult.diff;
+
+    const commitUrl = `https://github.com/${pr.owner}/${pr.repo}/commit/${fixResult.commitSha}`;
+
+    return `${AUTOFIX_MARKER}
+[BugHunter Autofix](https://github.com/Senna46/claude-code-bughunter) committed fixes directly to \`${pr.headRef}\` ([${commitShort}](${commitUrl})).
+
+${fixedList}
+
+<details><summary>Changes (${pr.owner}/${pr.repo}@${commitShort})</summary>
+
+\`\`\`diff
+${diffPreview}
+\`\`\`
+
+</details>
+`;
+  }
+
+  private buildFixPrCommentBody(
+    pr: PullRequest,
+    fixResult: FixResult,
+    fixPrNumber: number,
+    fixPrUrl: string
+  ): string {
+    const fixedList = fixResult.fixedBugs
+      .map((fb) => `- :white_check_mark: Fixed: **${fb.title}**\n  - ${fb.description}`)
+      .join("\n");
+
+    const diffPreview = fixResult.diff.length > 10000
+      ? fixResult.diff.substring(0, 10000) + "\n... diff truncated ..."
+      : fixResult.diff;
+
+    return `${AUTOFIX_MARKER}
+[BugHunter Autofix](https://github.com/Senna46/claude-code-bughunter) created a fix PR: [#${fixPrNumber}](${fixPrUrl})
+
+${fixedList}
+
+<details><summary>Changes</summary>
 
 \`\`\`diff
 ${diffPreview}

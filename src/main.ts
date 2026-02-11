@@ -15,7 +15,7 @@ import { logger, setLogLevel } from "./logger.js";
 import { PrMonitor } from "./prMonitor.js";
 import type { PrWithNewCommits } from "./prMonitor.js";
 import { StateStore } from "./state.js";
-import type { BugRecord, Config, PullRequest } from "./types.js";
+import type { Bug, BugRecord, Config, PullRequest } from "./types.js";
 
 class BugHunterDaemon {
   private config: Config;
@@ -46,6 +46,7 @@ class BugHunterDaemon {
       repos: this.config.githubRepos,
       pollInterval: this.config.pollInterval,
       botName: this.config.botName,
+      autofixMode: this.config.autofixMode,
       claudeModel: this.config.claudeModel ?? "(default)",
     });
 
@@ -240,39 +241,10 @@ class BugHunterDaemon {
         }));
         this.state.saveBugs(bugRecords);
 
-        // Update status: bugs found, now generating fixes
-        await this.github.createCommitStatus(
-          pr.owner,
-          pr.repo,
-          pr.headSha,
-          "pending",
-          `Found ${analysis.bugs.length} bug(s), generating fixes...`
-        );
+        // 7. Generate fixes based on autofix mode
+        await this.handleAutofix(pr, analysis.bugs, repoFullName);
 
-        // 7. Generate fixes
-        const fixResult = await this.fixGenerator.generateFixes(
-          pr,
-          analysis.bugs
-        );
-
-        if (fixResult) {
-          // 8. Save fix branch to state
-          this.state.saveFixBranch(
-            repoFullName,
-            pr.number,
-            fixResult.branchName,
-            fixResult.commitSha
-          );
-
-          // 9. Post autofix comment
-          await this.commenter.postAutofixComment(
-            pr,
-            fixResult,
-            this.config.botName
-          );
-        }
-
-        // Set commit status to error (grey indicator) - bugs found
+        // Set commit status - bugs found
         await this.github.createCommitStatus(
           pr.owner,
           pr.repo,
@@ -314,6 +286,111 @@ class BugHunterDaemon {
         "error",
         "Analysis failed"
       );
+    }
+  }
+
+  // ============================================================
+  // Autofix mode handling
+  // ============================================================
+
+  private async handleAutofix(
+    pr: PullRequest,
+    bugs: Bug[],
+    repoFullName: string
+  ): Promise<void> {
+    const mode = this.config.autofixMode;
+
+    if (mode === "off") {
+      logger.info("Autofix mode is off. Skipping fix generation.", {
+        prNumber: pr.number,
+        repo: repoFullName,
+      });
+      return;
+    }
+
+    // Update status: generating fixes
+    await this.github.createCommitStatus(
+      pr.owner,
+      pr.repo,
+      pr.headSha,
+      "pending",
+      `Found ${bugs.length} bug(s), generating fixes...`
+    );
+
+    if (mode === "commit") {
+      // Commit directly to the PR's head branch
+      const fixResult = await this.fixGenerator.generateFixesDirectCommit(
+        pr,
+        bugs
+      );
+
+      if (fixResult) {
+        await this.commenter.postDirectCommitComment(pr, fixResult);
+      }
+      return;
+    }
+
+    // "branch" and "pr" modes both start by creating a fix branch
+    const fixResult = await this.fixGenerator.generateFixes(pr, bugs);
+
+    if (!fixResult) {
+      return;
+    }
+
+    // Save fix branch to state
+    this.state.saveFixBranch(
+      repoFullName,
+      pr.number,
+      fixResult.branchName,
+      fixResult.commitSha
+    );
+
+    if (mode === "branch") {
+      // Post autofix comment with approval command
+      await this.commenter.postAutofixComment(
+        pr,
+        fixResult,
+        this.config.botName
+      );
+    } else if (mode === "pr") {
+      // Create a new PR from the fix branch to the PR's head branch
+      try {
+        const bugTitles = bugs
+          .slice(0, 5)
+          .map((b) => `- ${b.title}`)
+          .join("\n");
+        const prTitle = `fix: BugHunter autofix for #${pr.number}`;
+        const prBody = `Automated bug fixes for PR #${pr.number} (\`${pr.title}\`).\n\nFixed issues:\n${bugTitles}${bugs.length > 5 ? `\n- ... and ${bugs.length - 5} more` : ""}`;
+
+        const fixPr = await this.github.createPullRequest(
+          pr.owner,
+          pr.repo,
+          fixResult.branchName,
+          pr.headRef,
+          prTitle,
+          prBody
+        );
+
+        logger.info("Created fix PR.", {
+          fixPrNumber: fixPr.number,
+          fixPrUrl: fixPr.htmlUrl,
+        });
+
+        await this.commenter.postFixPrComment(
+          pr,
+          fixResult,
+          fixPr.number,
+          fixPr.htmlUrl
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        logger.error("Failed to create fix PR.", {
+          prNumber: pr.number,
+          repo: repoFullName,
+          error: message,
+        });
+      }
     }
   }
 
