@@ -240,6 +240,15 @@ class BugHunterDaemon {
         }));
         this.state.saveBugs(bugRecords);
 
+        // Update status: bugs found, now generating fixes
+        await this.github.createCommitStatus(
+          pr.owner,
+          pr.repo,
+          pr.headSha,
+          "pending",
+          `Found ${analysis.bugs.length} bug(s), generating fixes...`
+        );
+
         // 7. Generate fixes
         const fixResult = await this.fixGenerator.generateFixes(
           pr,
