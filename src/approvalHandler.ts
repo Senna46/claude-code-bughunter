@@ -1,5 +1,5 @@
 // Approval handler for Claude Code BugHunter.
-// Monitors PR comments for "@bughunter push <sha>" commands,
+// Monitors PR comments for "/bughunter push <sha>" commands,
 // validates the commit SHA against known fix branches, merges
 // the fix into the PR branch, and adds a rocket reaction.
 // Limitations: Uses GitHub merge API (not cherry-pick). If merge
@@ -64,7 +64,7 @@ export class ApprovalHandler {
   }
 
   // ============================================================
-  // Parse "@bughunter push <sha>" from comment body
+  // Parse "/bughunter push <sha>" from comment body
   // ============================================================
 
   private parseApprovalCommand(
@@ -81,9 +81,9 @@ export class ApprovalHandler {
     // shown inside code fences in comments
     const bodyWithoutCodeBlocks = body.replace(/```[\s\S]*?```/g, "");
 
-    // Match @bughunter push <sha> (case-insensitive, flexible whitespace)
+    // Match /bughunter push <sha> (case-insensitive, flexible whitespace)
     const pattern = new RegExp(
-      `@${this.escapeRegex(this.config.botName)}\\s+push\\s+([a-f0-9]{7,40})`,
+      `/${this.escapeRegex(this.config.botName)}\\s+push\\s+([a-f0-9]{7,40})`,
       "i"
     );
     const match = bodyWithoutCodeBlocks.match(pattern);

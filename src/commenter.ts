@@ -302,7 +302,7 @@ ${fixedList}
 
 Or push these changes by commenting:
 \`\`\`
-@${botName} push ${commitShort}
+/${botName} push ${commitShort}
 \`\`\`
 
 <details><summary>Preview (${pr.owner}/${pr.repo}@${commitShort})</summary>
