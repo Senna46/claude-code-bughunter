@@ -72,12 +72,21 @@ export class ApprovalHandler {
     commentId: number,
     pr: PullRequest
   ): ApprovalCommand | null {
+    // Skip BugHunter's own autofix comments to prevent self-approval
+    if (body.includes("<!-- BUGHUNTER_AUTOFIX_COMMENT -->")) {
+      return null;
+    }
+
+    // Strip code blocks (``` ... ```) to avoid matching example commands
+    // shown inside code fences in comments
+    const bodyWithoutCodeBlocks = body.replace(/```[\s\S]*?```/g, "");
+
     // Match @bughunter push <sha> (case-insensitive, flexible whitespace)
     const pattern = new RegExp(
       `@${this.escapeRegex(this.config.botName)}\\s+push\\s+([a-f0-9]{7,40})`,
       "i"
     );
-    const match = body.match(pattern);
+    const match = bodyWithoutCodeBlocks.match(pattern);
 
     if (!match) {
       return null;
