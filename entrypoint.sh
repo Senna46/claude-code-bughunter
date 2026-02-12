@@ -14,15 +14,30 @@ set -euo pipefail
 # (required for claude -p to skip interactive prompts)
 CLAUDE_JSON="/root/.claude.json"
 
-# If Docker created it as a directory (due to non-existent file mount), remove it
+# If Docker created it as a directory (due to non-existent file mount), unmount it
 if [ -d "$CLAUDE_JSON" ]; then
-  echo "[entrypoint] WARNING: $CLAUDE_JSON is a directory (Docker auto-created). Removing..."
-  rm -rf "$CLAUDE_JSON"
+  echo "[entrypoint] WARNING: $CLAUDE_JSON is a directory (Docker auto-created)."
+  echo "[entrypoint] Attempting to unmount bind mount..."
+  if umount "$CLAUDE_JSON" 2>/dev/null; then
+    rm -rf "$CLAUDE_JSON"
+    echo "[entrypoint] Successfully unmounted and removed directory."
+  else
+    # If unmount fails (e.g., not a mount point or no permission), just log and continue
+    # The file creation below will fail, but we handle it gracefully
+    echo "[entrypoint] Could not unmount $CLAUDE_JSON (may not be a mount point or insufficient privileges)."
+    echo "[entrypoint] Will attempt to work around this..."
+  fi
 fi
 
 if [ ! -f "$CLAUDE_JSON" ]; then
-  echo '{"hasCompletedOnboarding": true}' > "$CLAUDE_JSON"
-  echo "[entrypoint] Created $CLAUDE_JSON with onboarding bypass."
+  if echo '{"hasCompletedOnboarding": true}' > "$CLAUDE_JSON" 2>/dev/null; then
+    echo "[entrypoint] Created $CLAUDE_JSON with onboarding bypass."
+  else
+    echo "[entrypoint] ERROR: Cannot create $CLAUDE_JSON (likely a bind-mounted directory)."
+    echo "[entrypoint] Please create an empty file at ~/.claude.json on your host before starting the container:"
+    echo "[entrypoint]   touch ~/.claude.json"
+    exit 1
+  fi
 elif ! grep -q '"hasCompletedOnboarding"' "$CLAUDE_JSON" 2>/dev/null; then
   # File exists but missing the flag - add it via temp file to preserve content
   python3 -c "

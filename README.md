@@ -103,6 +103,10 @@ cd claude-code-bughunter
 cp .env.example .env
 # Edit .env with your settings (see Configuration section)
 
+# First-time setup: Create claude.json if it doesn't exist
+# (Prevents Docker from creating it as a directory)
+touch ~/.claude.json
+
 # macOS only: Add authentication tokens to .env
 # gh auth token            → set GH_TOKEN in .env
 # claude setup-token       → set CLAUDE_CODE_OAUTH_TOKEN in .env

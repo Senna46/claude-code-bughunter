@@ -33,8 +33,9 @@ services:
       - ${HOME}/.claude:/root/.claude
 
       # Mount claude.json (onboarding state, read-write)
-      # Note: If the file doesn't exist on host, Docker creates a directory.
-      # The entrypoint script detects and fixes this automatically.
+      # IMPORTANT: Create an empty file on host before first run to avoid Docker
+      # creating a directory: touch ~/.claude.json
+      # If a directory was created, the entrypoint will attempt to fix it.
       - ${HOME}/.claude.json:/root/.claude.json
 
 volumes:
