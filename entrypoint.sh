@@ -13,6 +13,13 @@ set -euo pipefail
 # Ensure ~/.claude.json exists with onboarding completed
 # (required for claude -p to skip interactive prompts)
 CLAUDE_JSON="/root/.claude.json"
+
+# If Docker created it as a directory (due to non-existent file mount), remove it
+if [ -d "$CLAUDE_JSON" ]; then
+  echo "[entrypoint] WARNING: $CLAUDE_JSON is a directory (Docker auto-created). Removing..."
+  rm -rf "$CLAUDE_JSON"
+fi
+
 if [ ! -f "$CLAUDE_JSON" ]; then
   echo '{"hasCompletedOnboarding": true}' > "$CLAUDE_JSON"
   echo "[entrypoint] Created $CLAUDE_JSON with onboarding bypass."
