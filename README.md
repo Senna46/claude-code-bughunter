@@ -79,6 +79,25 @@ Copy `.env.example` to `.env` and configure:
 
 ## Running as a Service
 
+### Docker (recommended)
+
+```bash
+# Configure environment
+cp .env.example .env
+# Edit .env with your settings
+
+# Build and start
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+The container mounts `~/.config/gh/` and `~/.claude/` from the host for authentication. Make sure `gh auth login` and `claude` are authenticated on the host before starting.
+
 ### systemd (Linux/WSL2)
 
 ```bash

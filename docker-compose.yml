@@ -1,0 +1,25 @@
+# Docker Compose for Claude Code BugHunter
+# Mounts gh and claude auth configs from the host.
+# Persists state DB and cloned repos in a named volume.
+
+services:
+  bughunter:
+    build: .
+    container_name: claude-code-bughunter
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - BUGHUNTER_WORK_DIR=/data/repos
+      - BUGHUNTER_DB_PATH=/data/db/state.db
+    volumes:
+      # Persist state and cloned repos
+      - bughunter-data:/data
+
+      # Mount gh CLI auth (read-only)
+      - ${HOME}/.config/gh:/root/.config/gh:ro
+
+      # Mount claude CLI auth (read-only)
+      - ${HOME}/.claude:/root/.claude:ro
+
+volumes:
+  bughunter-data:
