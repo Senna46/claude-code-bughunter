@@ -13,6 +13,26 @@ import type { PrCommit, PullRequest } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
+// ============================================================
+// Token validation utility
+// ============================================================
+
+/**
+ * Validates GitHub token format.
+ * Checks if the token starts with one of the valid GitHub token prefixes.
+ * @param token - The token to validate
+ * @throws Error if the token format is invalid
+ */
+export function validateGitHubToken(token: string): void {
+  const validPrefixes = ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'github_pat_'];
+  const hasValidPrefix = validPrefixes.some(prefix => token.startsWith(prefix));
+  if (!hasValidPrefix) {
+    throw new Error(
+      `Invalid GH_TOKEN format. GitHub tokens should start with one of: ${validPrefixes.join(', ')}`
+    );
+  }
+}
+
 export class GitHubClient {
   private octokit: Octokit;
 
@@ -32,13 +52,7 @@ export class GitHubClient {
     if (envToken && envToken.trim()) {
       const trimmedToken = envToken.trim();
       // Validate GitHub token format
-      const validPrefixes = ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'github_pat_'];
-      const hasValidPrefix = validPrefixes.some(prefix => trimmedToken.startsWith(prefix));
-      if (!hasValidPrefix) {
-        throw new Error(
-          `Invalid GH_TOKEN format. GitHub tokens should start with one of: ${validPrefixes.join(', ')}`
-        );
-      }
+      validateGitHubToken(trimmedToken);
       logger.info("GitHub client authenticated via GH_TOKEN environment variable.");
       return new GitHubClient(trimmedToken);
     }

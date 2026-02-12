@@ -10,7 +10,7 @@ import { ApprovalHandler } from "./approvalHandler.js";
 import { Commenter } from "./commenter.js";
 import { loadConfig } from "./config.js";
 import { FixGenerator } from "./fixGenerator.js";
-import { GitHubClient } from "./githubClient.js";
+import { GitHubClient, validateGitHubToken } from "./githubClient.js";
 import { logger, setLogLevel } from "./logger.js";
 import { PrMonitor } from "./prMonitor.js";
 import type { PrWithNewCommits } from "./prMonitor.js";
@@ -96,13 +96,7 @@ class BugHunterDaemon {
       if (!trimmedToken) {
         throw new Error("GH_TOKEN is set but empty.");
       }
-      const validPrefixes = ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'github_pat_'];
-      const hasValidPrefix = validPrefixes.some(prefix => trimmedToken.startsWith(prefix));
-      if (!hasValidPrefix) {
-        throw new Error(
-          `Invalid GH_TOKEN format. GitHub tokens should start with one of: ${validPrefixes.join(', ')}`
-        );
-      }
+      validateGitHubToken(trimmedToken);
       logger.debug("Using GH_TOKEN environment variable for authentication.");
     }
 
