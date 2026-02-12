@@ -246,13 +246,13 @@ class BugHunterDaemon {
       // 4. Update PR body with summary
       await this.commenter.updatePrSummary(pr, analysis);
 
-      // 5. Post review comments
-      await this.commenter.postReviewComments(pr, analysis);
-
-      // 5.5. Resolve existing BugHunter review threads after posting new ones
+      // 5. Resolve existing BugHunter review threads before posting new ones
       await this.commenter.resolveExistingBugThreads(pr);
 
-      // 6. Save bugs to state
+      // 6. Post review comments
+      await this.commenter.postReviewComments(pr, analysis);
+
+      // 7. Save bugs to state
       if (analysis.bugs.length > 0) {
         const bugRecords: BugRecord[] = analysis.bugs.map((bug) => ({
           id: bug.id,
@@ -269,7 +269,7 @@ class BugHunterDaemon {
         }));
         this.state.saveBugs(bugRecords);
 
-        // 7. Generate fixes based on autofix mode
+        // 8. Generate fixes based on autofix mode
         await this.handleAutofix(pr, analysis.bugs, repoFullName);
 
         // Set commit status - bugs found

@@ -583,7 +583,7 @@ export class GitHubClient {
         isResolved: boolean;
         firstCommentBody: string;
       }> = [];
-      let cursor: string | null = null;
+      let cursor: string | undefined = undefined;
       let hasNextPage = true;
 
       while (hasNextPage) {

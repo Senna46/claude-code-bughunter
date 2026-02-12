@@ -258,7 +258,7 @@ Write a clear and concise overview of what this PR changes and why. Then identif
         bugs: [],
         overview: "Analysis output could not be parsed.",
         summary: "Analysis output could not be parsed.",
-        riskLevel: "medium",
+        riskLevel: "high",
       };
     }
   }
