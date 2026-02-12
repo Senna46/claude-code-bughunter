@@ -101,15 +101,6 @@ export class Commenter {
 ${SUMMARY_MARKER_END}`;
   }
 
-  private formatRiskBadge(riskLevel: RiskLevel): string {
-    const labels: Record<RiskLevel, string> = {
-      low: "**Low Risk**",
-      medium: "**Medium Risk**",
-      high: "**High Risk**",
-    };
-    return labels[riskLevel];
-  }
-
   // ============================================================
   // Resolve Existing BugHunter Review Threads
   // ============================================================
