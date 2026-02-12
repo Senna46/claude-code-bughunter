@@ -1,6 +1,12 @@
 # Docker Compose for Claude Code BugHunter
-# Mounts gh and claude auth configs from the host.
 # Persists state DB and cloned repos in a named volume.
+#
+# Authentication:
+#   GitHub: Set GH_TOKEN in .env (required on macOS, optional on Linux)
+#   Claude: Set CLAUDE_CODE_OAUTH_TOKEN in .env (required on macOS)
+#           On Linux, file-based auth via volume mount works automatically.
+#
+# To get CLAUDE_CODE_OAUTH_TOKEN, run: claude setup-token
 
 services:
   bughunter:
@@ -16,10 +22,21 @@ services:
       - bughunter-data:/data
 
       # Mount gh CLI auth (read-only)
+      # On Linux: hosts.yml contains the token, file mount is sufficient
+      # On macOS: hosts.yml exists but keyring holds the token, GH_TOKEN env var is required
       - ${HOME}/.config/gh:/root/.config/gh:ro
 
-      # Mount claude CLI auth (read-write: claude CLI writes debug/stats during operation)
+      # Mount claude CLI data (read-write: claude CLI writes debug/stats during operation)
+      # On Linux: this also contains .credentials.json (sufficient for auth)
+      # On macOS: credentials are in Keychain, not in files.
+      #           Set CLAUDE_CODE_OAUTH_TOKEN env var instead.
       - ${HOME}/.claude:/root/.claude
+
+      # Mount claude.json (onboarding state, read-write)
+      # IMPORTANT: Create an empty file on host before first run to avoid Docker
+      # creating a directory: touch ~/.claude.json
+      # If a directory was created, the entrypoint will attempt to fix it.
+      - ${HOME}/.claude.json:/root/.claude.json
 
 volumes:
   bughunter-data:

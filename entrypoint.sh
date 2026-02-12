@@ -1,0 +1,84 @@
+#!/bin/bash
+# Entrypoint for Claude Code BugHunter Docker container.
+# Ensures Claude CLI authentication is configured before starting the daemon.
+# On macOS, OAuth credentials are stored in Keychain (not files), so
+# CLAUDE_CODE_OAUTH_TOKEN env var is required for Docker.
+
+set -euo pipefail
+
+# ============================================================
+# Claude CLI authentication setup
+# ============================================================
+
+# Ensure ~/.claude.json exists with onboarding completed
+# (required for claude -p to skip interactive prompts)
+CLAUDE_JSON="/root/.claude.json"
+
+# If Docker created it as a directory (due to non-existent file mount), unmount it
+if [ -d "$CLAUDE_JSON" ]; then
+  echo "[entrypoint] WARNING: $CLAUDE_JSON is a directory (Docker auto-created)."
+  echo "[entrypoint] Attempting to unmount bind mount..."
+  if umount "$CLAUDE_JSON" 2>/dev/null; then
+    rm -rf "$CLAUDE_JSON"
+    echo "[entrypoint] Successfully unmounted and removed directory."
+  else
+    # If unmount fails (e.g., not a mount point or no permission), just log and continue
+    # The file creation below will fail, but we handle it gracefully
+    echo "[entrypoint] Could not unmount $CLAUDE_JSON (may not be a mount point or insufficient privileges)."
+    echo "[entrypoint] Will attempt to work around this..."
+  fi
+fi
+
+if [ ! -f "$CLAUDE_JSON" ]; then
+  if echo '{"hasCompletedOnboarding": true}' > "$CLAUDE_JSON" 2>/dev/null; then
+    echo "[entrypoint] Created $CLAUDE_JSON with onboarding bypass."
+  else
+    echo "[entrypoint] ERROR: Cannot create $CLAUDE_JSON (likely a bind-mounted directory)."
+    echo "[entrypoint] Please create an empty file at ~/.claude.json on your host before starting the container:"
+    echo "[entrypoint]   touch ~/.claude.json"
+    exit 1
+  fi
+elif ! grep -q '"hasCompletedOnboarding"' "$CLAUDE_JSON" 2>/dev/null; then
+  # File exists but missing the flag - merge it while preserving existing content
+  node -e "
+const fs = require('fs');
+const filePath = '$CLAUDE_JSON';
+let data = {};
+try {
+  const content = fs.readFileSync(filePath, 'utf8');
+  if (content.trim()) {
+    data = JSON.parse(content);
+  }
+} catch (err) {
+  // If file is empty or invalid JSON, start with empty object
+  console.error('[entrypoint] Warning: Could not parse existing JSON, starting fresh:', err.message);
+}
+data.hasCompletedOnboarding = true;
+fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+"
+  echo "[entrypoint] Updated $CLAUDE_JSON with onboarding bypass (preserved existing content)."
+fi
+
+# Validate authentication
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  echo "[entrypoint] CLAUDE_CODE_OAUTH_TOKEN is set. Using OAuth authentication."
+elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "[entrypoint] ANTHROPIC_API_KEY is set. Using API key authentication (pay-as-you-go billing)."
+elif [ -f "/root/.claude/.credentials.json" ]; then
+  echo "[entrypoint] Found mounted credentials file. Using file-based authentication."
+else
+  echo "[entrypoint] WARNING: No Claude authentication found."
+  echo "[entrypoint]   For Pro/Max plan (macOS Docker):"
+  echo "[entrypoint]     1. Run 'claude setup-token' on your Mac"
+  echo "[entrypoint]     2. Set CLAUDE_CODE_OAUTH_TOKEN in .env"
+  echo "[entrypoint]   For API key:"
+  echo "[entrypoint]     Set ANTHROPIC_API_KEY in .env"
+  echo "[entrypoint]   For Linux (file-based auth):"
+  echo "[entrypoint]     Mount ~/.claude to /root/.claude (already configured in docker-compose.yml)"
+fi
+
+# ============================================================
+# Start the application
+# ============================================================
+
+exec node dist/main.js "$@"

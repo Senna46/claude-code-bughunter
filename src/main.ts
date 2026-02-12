@@ -77,16 +77,23 @@ class BugHunterDaemon {
     const { promisify } = await import("util");
     const execFileAsync = promisify(execFile);
 
-    // Check gh CLI
-    try {
-      const { stdout } = await execFileAsync("gh", ["auth", "status"]);
-      logger.debug("gh CLI auth status OK.", {
-        output: stdout.substring(0, 200),
-      });
-    } catch (error) {
-      throw new Error(
-        "gh CLI is not authenticated. Run 'gh auth login' first."
-      );
+    // Check gh CLI or GH_TOKEN availability
+    const ghToken = process.env.GH_TOKEN;
+    if (ghToken && ghToken.trim()) {
+      // GH_TOKEN is set - format validation will be done in createFromGhCli()
+      logger.debug("Using GH_TOKEN environment variable for authentication.");
+    } else {
+      // Fall back to gh CLI if GH_TOKEN is not set or empty/whitespace-only
+      try {
+        const { stdout } = await execFileAsync("gh", ["auth", "status"]);
+        logger.debug("gh CLI auth status OK.", {
+          output: stdout.substring(0, 200),
+        });
+      } catch (error) {
+        throw new Error(
+          "gh CLI is not authenticated. Set GH_TOKEN environment variable or run 'gh auth login'."
+        );
+      }
     }
 
     // Check claude CLI
@@ -99,6 +106,24 @@ class BugHunterDaemon {
       throw new Error(
         "claude CLI is not available. Install Claude Code first: https://docs.anthropic.com/en/docs/claude-code"
       );
+    }
+
+    // Verify Claude authentication
+    if (
+      !process.env.CLAUDE_CODE_OAUTH_TOKEN &&
+      !process.env.ANTHROPIC_API_KEY
+    ) {
+      // No env-based auth; check for file-based credentials (Linux)
+      const { existsSync } = await import("fs");
+      const homeDir = process.env.HOME ?? "/root";
+      const credFile = `${homeDir}/.claude/.credentials.json`;
+      if (!existsSync(credFile)) {
+        logger.warn(
+          "No Claude authentication detected. " +
+            "On macOS Docker, set CLAUDE_CODE_OAUTH_TOKEN (run 'claude setup-token' to generate). " +
+            "On Linux, ensure ~/.claude is mounted and contains .credentials.json."
+        );
+      }
     }
 
     // Check git
