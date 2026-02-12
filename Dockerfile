@@ -45,6 +45,11 @@ RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist/ ./dist/
 
+# Configure git identity and credential helper for automated commits
+RUN git config --global user.email "bughunter@claude-code.local" \
+  && git config --global user.name "Claude Code BugHunter" \
+  && git config --global credential.https://github.com.helper "!/usr/bin/gh auth git-credential"
+
 # Create directories for state and repos
 RUN mkdir -p /data/repos /data/db
 

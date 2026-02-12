@@ -18,8 +18,8 @@ services:
       # Mount gh CLI auth (read-only)
       - ${HOME}/.config/gh:/root/.config/gh:ro
 
-      # Mount claude CLI auth (read-only)
-      - ${HOME}/.claude:/root/.claude:ro
+      # Mount claude CLI auth (read-write: claude CLI writes debug/stats during operation)
+      - ${HOME}/.claude:/root/.claude
 
 volumes:
   bughunter-data:
