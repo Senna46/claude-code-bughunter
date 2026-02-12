@@ -11,6 +11,7 @@ import { logger } from "./logger.js";
 import type {
   AnalysisResult,
   Bug,
+  BugRecord,
   ClaudeAnalysisOutput,
   Config,
 } from "./types.js";
@@ -72,6 +73,12 @@ Rules:
 - Do NOT report style issues, formatting preferences, or minor nits.
 - Do NOT report issues that are clearly intentional design decisions.
 - Each bug must reference a specific file and, when possible, specific line numbers from the diff.
+- When full source files are provided, use them to understand the complete context (function flow, async/await semantics, type definitions, call sites) rather than guessing from the diff alone.
+- When previously reported bugs are listed, follow these rules strictly:
+  - Do NOT re-report bugs that have already been fixed by subsequent commits.
+  - Do NOT suggest reversing a previous fix unless there is a clear new bug introduced by it.
+  - If a previously reported bug is still present, you may reference it but do not duplicate it.
+  - Focus on NEW issues not covered by previous findings.
 - Severity guidelines:
   - critical: Security vulnerabilities, data loss, crashes in production
   - high: Incorrect business logic, race conditions, resource leaks
@@ -94,17 +101,31 @@ export class Analyzer {
   async analyzeDiff(
     diff: string,
     prTitle: string,
-    commitSha: string
+    commitSha: string,
+    previousBugs?: BugRecord[],
+    fileContents?: Map<string, string>
   ): Promise<AnalysisResult> {
     // Truncate diff if too large
     const truncatedDiff = this.truncateDiff(diff);
 
-    const prompt = this.buildAnalysisPrompt(truncatedDiff, prTitle);
+    // Truncate file contents if total size exceeds the limit
+    const truncatedFileContents = fileContents
+      ? this.truncateFileContents(fileContents)
+      : undefined;
+
+    const prompt = this.buildAnalysisPrompt(
+      truncatedDiff,
+      prTitle,
+      previousBugs,
+      truncatedFileContents
+    );
 
     logger.info("Starting bug analysis via claude -p ...", {
       diffLength: truncatedDiff.length,
       originalDiffLength: diff.length,
       wasTruncated: diff.length !== truncatedDiff.length,
+      previousBugCount: previousBugs?.length ?? 0,
+      fileContextCount: truncatedFileContents?.size ?? 0,
     });
 
     const claudeOutput = await this.runClaudeAnalysis(prompt);
@@ -129,16 +150,127 @@ export class Analyzer {
   // Build the analysis prompt
   // ============================================================
 
-  private buildAnalysisPrompt(diff: string, prTitle: string): string {
-    return `Analyze the following pull request diff for bugs, security issues, and code quality problems.
+  private buildAnalysisPrompt(
+    diff: string,
+    prTitle: string,
+    previousBugs?: BugRecord[],
+    fileContents?: Map<string, string>
+  ): string {
+    const sections: string[] = [];
 
-PR Title: ${prTitle}
+    sections.push(
+      `Analyze the following pull request diff for bugs, security issues, and code quality problems.`
+    );
+    sections.push(`PR Title: ${prTitle}`);
 
-\`\`\`diff
-${diff}
-\`\`\`
+    // Include full source files for deeper context
+    if (fileContents && fileContents.size > 0) {
+      const fileContextLines: string[] = [
+        "Full source of changed files (for context — use these to understand the complete code flow, async/await semantics, type definitions, and how the changed code interacts with the rest of the codebase):",
+      ];
+      for (const [filePath, content] of fileContents) {
+        fileContextLines.push(`\n=== ${filePath} ===`);
+        fileContextLines.push(content);
+        fileContextLines.push(`=== END ${filePath} ===`);
+      }
+      sections.push(fileContextLines.join("\n"));
+    }
 
-Write a clear and concise overview of what this PR changes and why. Then identify all real bugs and return your findings as structured JSON.`;
+    // Include the diff
+    sections.push(`\`\`\`diff\n${diff}\n\`\`\``);
+
+    // Include previously reported bugs to avoid flip-flopping
+    if (previousBugs && previousBugs.length > 0) {
+      const bugLines: string[] = [
+        "Previously reported bugs (from prior analysis of this PR):",
+      ];
+      for (let i = 0; i < previousBugs.length; i++) {
+        const bug = previousBugs[i];
+        const location = bug.startLine
+          ? `${bug.filePath}#L${bug.startLine}${bug.endLine ? `-L${bug.endLine}` : ""}`
+          : bug.filePath;
+        bugLines.push(
+          `${i + 1}. [${bug.severity.toUpperCase()}] "${bug.title}" (${location})`
+        );
+        bugLines.push(`   - ${bug.description}`);
+      }
+      bugLines.push("");
+      bugLines.push(
+        "When reviewing, consider:",
+        "- Do NOT re-report bugs that have already been fixed by subsequent commits.",
+        "- Do NOT suggest reversing a previous fix unless there is a clear new bug introduced by it.",
+        "- If a previously reported bug is still present, you may reference it but do not duplicate.",
+        "- Focus on NEW issues not covered by previous findings."
+      );
+      sections.push(bugLines.join("\n"));
+    }
+
+    sections.push(
+      "Write a clear and concise overview of what this PR changes and why. Then identify all real bugs and return your findings as structured JSON."
+    );
+
+    return sections.join("\n\n");
+  }
+
+  // ============================================================
+  // Extract changed file paths from a diff
+  // ============================================================
+
+  extractChangedFilePaths(diff: string): string[] {
+    const filePaths: string[] = [];
+
+    for (const line of diff.split("\n")) {
+      // Match diff file header: +++ b/path/to/file
+      // Skip /dev/null which represents deleted files
+      if (line.startsWith("+++ b/")) {
+        filePaths.push(line.substring(6));
+      }
+    }
+
+    // Deduplicate while preserving order
+    return [...new Set(filePaths)];
+  }
+
+  // ============================================================
+  // Truncate file contents to stay within the configured limit
+  // ============================================================
+
+  private truncateFileContents(
+    fileContents: Map<string, string>
+  ): Map<string, string> {
+    const maxSize = this.config.maxFileContextSize;
+    let totalSize = 0;
+
+    for (const content of fileContents.values()) {
+      totalSize += content.length;
+    }
+
+    if (totalSize <= maxSize) {
+      return fileContents;
+    }
+
+    logger.warn(
+      `File context total size (${totalSize} chars) exceeds max (${maxSize}). Excluding largest files.`
+    );
+
+    // Sort files by size ascending so we keep smaller files first
+    const entries = [...fileContents.entries()].sort(
+      (a, b) => a[1].length - b[1].length
+    );
+
+    const result = new Map<string, string>();
+    let currentSize = 0;
+
+    for (const [filePath, content] of entries) {
+      if (currentSize + content.length > maxSize) {
+        logger.debug(`Excluding large file from context: ${filePath} (${content.length} chars)`);
+        continue;
+      }
+      result.set(filePath, content);
+      currentSize += content.length;
+    }
+
+    return result;
   }
 
   // ============================================================

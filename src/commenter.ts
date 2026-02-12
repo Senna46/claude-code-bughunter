@@ -15,7 +15,6 @@ import type {
   Config,
   FixResult,
   PullRequest,
-  RiskLevel,
 } from "./types.js";
 
 // Markers for identifying BugHunter-managed sections
@@ -203,15 +202,18 @@ ${SUMMARY_MARKER_END}`;
       }
     }
 
-    // Post inline bugs as a PR review
+    // Build a unified review body that includes all bugs info.
+    // Fallback bugs (those that cannot be attached to specific diff lines)
+    // are included in the review body rather than posted as a separate comment.
+    const reviewBody = this.buildReviewSummaryBody(analysis, fallbackBugs);
+
     if (inlineBugs.length > 0) {
+      // Post inline bugs as a PR review with fallback details in the body
       const reviewComments = inlineBugs.map((bug) => ({
         path: bug.filePath,
         line: (bug.endLine ?? bug.startLine)!,
         body: this.buildInlineCommentBody(bug),
       }));
-
-      const reviewBody = this.buildReviewSummaryBody(analysis);
 
       try {
         await this.github.createReview(
@@ -223,29 +225,47 @@ ${SUMMARY_MARKER_END}`;
           reviewComments
         );
         logger.info(
-          `Posted review with ${reviewComments.length} inline comment(s).`
+          `Posted review with ${reviewComments.length} inline comment(s)` +
+            (fallbackBugs.length > 0
+              ? ` and ${fallbackBugs.length} fallback bug(s) in review body.`
+              : ".")
         );
       } catch (error) {
         const message =
           error instanceof Error ? error.message : String(error);
-        logger.error("Failed to post inline review. Falling back to issue comment for all bugs.", {
+        logger.error("Failed to post inline review. Posting all bugs in review body.", {
           error: message,
           inlineBugCount: inlineBugs.length,
         });
-        // Move all inline bugs to fallback
-        fallbackBugs.push(...inlineBugs);
+        // If inline comments fail, post all bugs in review body only
+        const allFallbackBody = this.buildReviewSummaryBody(
+          analysis,
+          analysis.bugs
+        );
+        await this.github.createReview(
+          pr.owner,
+          pr.repo,
+          pr.number,
+          analysis.commitSha,
+          allFallbackBody,
+          []
+        );
+        logger.info(
+          `Posted review body with all ${analysis.bugs.length} bug(s) (inline posting failed).`
+        );
       }
-    }
-
-    // Post remaining bugs as an issue comment
-    if (fallbackBugs.length > 0) {
-      const fallbackAnalysis: AnalysisResult = {
-        ...analysis,
-        bugs: fallbackBugs,
-      };
-      await this.postBugsAsIssueComment(pr, fallbackAnalysis);
+    } else {
+      // All bugs are fallback — post a review with body only (no inline comments)
+      await this.github.createReview(
+        pr.owner,
+        pr.repo,
+        pr.number,
+        analysis.commitSha,
+        reviewBody,
+        []
+      );
       logger.info(
-        `Posted ${fallbackBugs.length} bug(s) as issue comment (not in diff range).`
+        `Posted review with ${fallbackBugs.length} bug(s) in review body (no inline-eligible bugs).`
       );
     }
   }
@@ -293,9 +313,43 @@ ${SUMMARY_MARKER_END}`;
     return fileRanges.some((range) => line >= range.start && line <= range.end);
   }
 
-  private buildReviewSummaryBody(analysis: AnalysisResult): string {
-    const count = analysis.bugs.length;
-    return `Claude Code BugHunter has reviewed your changes and found ${count} potential issue(s).`;
+  private buildReviewSummaryBody(
+    analysis: AnalysisResult,
+    fallbackBugs: Bug[]
+  ): string {
+    const totalCount = analysis.bugs.length;
+    const headerLine = `Claude Code BugHunter has reviewed your changes and found ${totalCount} potential issue(s).`;
+
+    if (fallbackBugs.length === 0) {
+      return headerLine;
+    }
+
+    // Include fallback bug details in the review body so they are
+    // not posted as a separate issue comment
+    const fallbackSections = fallbackBugs
+      .map((bug) => {
+        const severityBadge = this.formatSeverityBadge(bug.severity);
+        const location = bug.startLine
+          ? `\`${bug.filePath}#L${bug.startLine}${bug.endLine ? `-L${bug.endLine}` : ""}\``
+          : `\`${bug.filePath}\``;
+
+        return `### ${bug.title}
+
+${severityBadge}
+
+${BUG_ID_PREFIX} ${bug.id} -->
+
+**Location:** ${location}
+
+${bug.description}`;
+      })
+      .join("\n\n---\n\n");
+
+    return `${headerLine}
+
+The following issue(s) could not be attached to specific diff lines:
+
+${fallbackSections}`;
   }
 
   private buildInlineCommentBody(bug: Bug): string {

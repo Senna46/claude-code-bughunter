@@ -14,6 +14,7 @@ export interface Config {
   autofixMode: AutofixMode;
   workDir: string;
   maxDiffSize: number;
+  maxFileContextSize: number;
   claudeModel: string | null;
   logLevel: LogLevel;
   dbPath: string;
