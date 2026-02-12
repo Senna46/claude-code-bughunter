@@ -77,16 +77,20 @@ class BugHunterDaemon {
     const { promisify } = await import("util");
     const execFileAsync = promisify(execFile);
 
-    // Check gh CLI
-    try {
-      const { stdout } = await execFileAsync("gh", ["auth", "status"]);
-      logger.debug("gh CLI auth status OK.", {
-        output: stdout.substring(0, 200),
-      });
-    } catch (error) {
-      throw new Error(
-        "gh CLI is not authenticated. Run 'gh auth login' first."
-      );
+    // Check gh CLI (skip if GH_TOKEN is set)
+    if (!process.env.GH_TOKEN) {
+      try {
+        const { stdout } = await execFileAsync("gh", ["auth", "status"]);
+        logger.debug("gh CLI auth status OK.", {
+          output: stdout.substring(0, 200),
+        });
+      } catch (error) {
+        throw new Error(
+          "gh CLI is not authenticated. Run 'gh auth login' first."
+        );
+      }
+    } else {
+      logger.debug("Using GH_TOKEN environment variable for authentication.");
     }
 
     // Check claude CLI

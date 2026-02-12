@@ -15,12 +15,14 @@ Monitors open pull requests for new commits, analyzes diffs for potential bugs u
 
 ## Prerequisites
 
-- **Node.js** >= 18.0.0
 - **`gh` CLI**: Authenticated with GitHub (`gh auth status`)
 - **`claude` CLI**: Authenticated Claude Code (`claude --version`)
 - **`git`**: For repository operations
+- **Node.js** >= 18.0.0 (for local installation) or **Docker** (for containerized deployment)
 
 ## Quick Start
+
+### Local Installation
 
 ```bash
 # Clone the repository
@@ -42,6 +44,29 @@ npm start
 npm run dev
 ```
 
+### Docker
+
+```bash
+# Clone and configure
+git clone https://github.com/Senna46/claude-code-bughunter.git
+cd claude-code-bughunter
+cp .env.example .env
+# Edit .env with your settings
+
+# macOS only: Add GitHub token to .env
+# gh auth token
+# GH_TOKEN=<your-token>
+
+# Build and start
+docker compose build
+docker compose up -d
+
+# View logs
+docker compose logs -f
+```
+
+> **Note**: On macOS, gh CLI uses Keychain for authentication. Set `GH_TOKEN` in `.env` using `gh auth token`. On Linux, file-based authentication works automatically.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and configure:
@@ -58,6 +83,7 @@ Copy `.env.example` to `.env` and configure:
 | `BUGHUNTER_CLAUDE_MODEL` | No | CLI default | Claude model to use |
 | `BUGHUNTER_LOG_LEVEL` | No | `info` | Log level (debug/info/warn/error) |
 | `BUGHUNTER_DB_PATH` | No | `~/.bughunter/state.db` | SQLite database path |
+| `GH_TOKEN` | macOS Docker only | - | GitHub token for Docker on macOS (get with `gh auth token`) |
 
 \* At least one of `BUGHUNTER_GITHUB_ORGS` or `BUGHUNTER_GITHUB_REPOS` must be set.
 
@@ -81,22 +107,32 @@ Copy `.env.example` to `.env` and configure:
 
 ### Docker (recommended)
 
-```bash
-# Configure environment
-cp .env.example .env
-# Edit .env with your settings
+Use `restart: unless-stopped` in `docker-compose.yml` (already configured) to run as a daemon:
 
-# Build and start
+```bash
 docker compose up -d
+```
+
+**Management commands:**
+
+```bash
+# Check status
+docker compose ps
 
 # View logs
 docker compose logs -f
 
+# Restart
+docker compose restart
+
 # Stop
 docker compose down
+
+# Remove with data
+docker compose down -v
 ```
 
-The container mounts `~/.config/gh/` and `~/.claude/` from the host for authentication. Make sure `gh auth login` and `claude` are authenticated on the host before starting.
+> The container persists state and cloned repos in a named volume `bughunter-data`.
 
 ### systemd (Linux/WSL2)
 

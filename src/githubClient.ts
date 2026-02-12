@@ -27,6 +27,14 @@ export class GitHubClient {
   // ============================================================
 
   static async createFromGhCli(): Promise<GitHubClient> {
+    // First, check if GH_TOKEN environment variable is set (required for Docker on macOS)
+    const envToken = process.env.GH_TOKEN;
+    if (envToken) {
+      logger.info("GitHub client authenticated via GH_TOKEN environment variable.");
+      return new GitHubClient(envToken);
+    }
+
+    // Fall back to gh CLI token (works on Linux and native installs)
     try {
       const { stdout } = await execFileAsync("gh", ["auth", "token"]);
       const token = stdout.trim();
@@ -39,7 +47,7 @@ export class GitHubClient {
       const message =
         error instanceof Error ? error.message : String(error);
       throw new Error(
-        `Failed to get GitHub token from gh CLI. Ensure 'gh auth login' has been run. Error: ${message}`
+        `Failed to get GitHub token. Set GH_TOKEN environment variable or run 'gh auth login'. Error: ${message}`
       );
     }
   }

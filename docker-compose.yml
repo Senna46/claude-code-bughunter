@@ -16,6 +16,8 @@ services:
       - bughunter-data:/data
 
       # Mount gh CLI auth (read-only)
+      # On Linux: hosts.yml contains the token, file mount is sufficient
+      # On macOS: hosts.yml exists but keyring holds the token, GH_TOKEN env var is required
       - ${HOME}/.config/gh:/root/.config/gh:ro
 
       # Mount claude CLI auth (read-write: claude CLI writes debug/stats during operation)
