@@ -226,11 +226,44 @@ class BugHunterDaemon {
         pr.number
       );
 
-      // 2. Analyze diff for bugs
+      // 1.5. Gather context for deeper analysis
+      // Retrieve previously reported bugs to avoid flip-flopping
+      const previousBugs = this.state.getOpenBugs(repoFullName, pr.number);
+      if (previousBugs.length > 0) {
+        logger.info(
+          `Found ${previousBugs.length} previously reported bug(s) to include as context.`,
+          { repo: repoFullName, prNumber: pr.number }
+        );
+      }
+
+      // Fetch full source of changed files for richer analysis context
+      const changedFilePaths = this.analyzer.extractChangedFilePaths(diff);
+      const fileContents = new Map<string, string>();
+      for (const filePath of changedFilePaths) {
+        const content = await this.github.getFileContent(
+          pr.owner,
+          pr.repo,
+          filePath,
+          pr.headSha
+        );
+        if (content !== null) {
+          fileContents.set(filePath, content);
+        }
+      }
+      if (fileContents.size > 0) {
+        logger.info(
+          `Fetched ${fileContents.size} file(s) as analysis context.`,
+          { filePaths: [...fileContents.keys()] }
+        );
+      }
+
+      // 2. Analyze diff for bugs (with previous findings and file context)
       const analysis = await this.analyzer.analyzeDiff(
         diff,
         pr.title,
-        latestCommitSha
+        latestCommitSha,
+        previousBugs.length > 0 ? previousBugs : undefined,
+        fileContents.size > 0 ? fileContents : undefined
       );
 
       // 3. Record all new commits as analyzed

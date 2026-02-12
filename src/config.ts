@@ -35,6 +35,10 @@ export function loadConfig(): Config {
     process.env.BUGHUNTER_MAX_DIFF_SIZE,
     100000
   );
+  const maxFileContextSize = parsePositiveInt(
+    process.env.BUGHUNTER_MAX_FILE_CONTEXT_SIZE,
+    200000
+  );
   const claudeModel = process.env.BUGHUNTER_CLAUDE_MODEL?.trim() || null;
   const logLevel = parseLogLevel(process.env.BUGHUNTER_LOG_LEVEL);
   const defaultDbPath = join(homedir(), ".bughunter", "state.db");
@@ -48,6 +52,7 @@ export function loadConfig(): Config {
     autofixMode,
     workDir,
     maxDiffSize,
+    maxFileContextSize,
     claudeModel,
     logLevel,
     dbPath,
