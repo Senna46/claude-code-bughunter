@@ -10,7 +10,7 @@ import { ApprovalHandler } from "./approvalHandler.js";
 import { Commenter } from "./commenter.js";
 import { loadConfig } from "./config.js";
 import { FixGenerator } from "./fixGenerator.js";
-import { GitHubClient, validateGitHubToken } from "./githubClient.js";
+import { GitHubClient } from "./githubClient.js";
 import { logger, setLogLevel } from "./logger.js";
 import { PrMonitor } from "./prMonitor.js";
 import type { PrWithNewCommits } from "./prMonitor.js";
@@ -77,12 +77,10 @@ class BugHunterDaemon {
     const { promisify } = await import("util");
     const execFileAsync = promisify(execFile);
 
-    // Check gh CLI or validate GH_TOKEN
+    // Check gh CLI or GH_TOKEN availability
     const ghToken = process.env.GH_TOKEN;
     if (ghToken && ghToken.trim()) {
-      // Validate GH_TOKEN format when meaningfully set
-      const trimmedToken = ghToken.trim();
-      validateGitHubToken(trimmedToken);
+      // GH_TOKEN is set - format validation will be done in createFromGhCli()
       logger.debug("Using GH_TOKEN environment variable for authentication.");
     } else {
       // Fall back to gh CLI if GH_TOKEN is not set or empty/whitespace-only
