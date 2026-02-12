@@ -39,22 +39,24 @@ if [ ! -f "$CLAUDE_JSON" ]; then
     exit 1
   fi
 elif ! grep -q '"hasCompletedOnboarding"' "$CLAUDE_JSON" 2>/dev/null; then
-  # File exists but missing the flag - add it via temp file to preserve content
-  python3 -c "
-import json, sys
-try:
-    with open('$CLAUDE_JSON') as f:
-        data = json.load(f)
-except:
-    data = {}
-data['hasCompletedOnboarding'] = True
-with open('$CLAUDE_JSON', 'w') as f:
-    json.dump(data, f, indent=2)
-" 2>/dev/null || {
-    # Fallback if python3 is not available: overwrite
-    echo '{"hasCompletedOnboarding": true}' > "$CLAUDE_JSON"
+  # File exists but missing the flag - merge it while preserving existing content
+  node -e "
+const fs = require('fs');
+const filePath = '$CLAUDE_JSON';
+let data = {};
+try {
+  const content = fs.readFileSync(filePath, 'utf8');
+  if (content.trim()) {
+    data = JSON.parse(content);
   }
-  echo "[entrypoint] Updated $CLAUDE_JSON with onboarding bypass."
+} catch (err) {
+  // If file is empty or invalid JSON, start with empty object
+  console.error('[entrypoint] Warning: Could not parse existing JSON, starting fresh:', err.message);
+}
+data.hasCompletedOnboarding = true;
+fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+"
+  echo "[entrypoint] Updated $CLAUDE_JSON with onboarding bypass (preserved existing content)."
 fi
 
 # Validate authentication
