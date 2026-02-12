@@ -88,14 +88,25 @@ export class Commenter {
         ? `Found **${analysis.bugs.length} potential issue(s)**.`
         : "No issues found.";
 
+    // Build bug summary section if there are bugs
+    const bugSummarySection =
+      analysis.bugs.length > 0
+        ? `>
+> **Bugs Found**
+> ${analysis.summary}
+>
+> ${bugCountText}
+`
+        : `>
+> ${bugCountText}
+`;
+
     return `${SUMMARY_MARKER_START}
 
 > [!NOTE]
 > **Overview**
 > ${analysis.overview}
->
-> ${bugCountText}
->
+${bugSummarySection}>
 > <sup>Written by [Claude Code BugHunter](https://github.com/Senna46/claude-code-bughunter) for commit [${commitShort}](${commitUrl}). This will update automatically on new commits.</sup>
 
 ${SUMMARY_MARKER_END}`;
