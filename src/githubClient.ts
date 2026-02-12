@@ -544,16 +544,20 @@ export class GitHubClient {
                 }>;
               };
             }>;
+            pageInfo: {
+              hasNextPage: boolean;
+              endCursor: string | null;
+            };
           };
         };
       };
     }
 
     const query = `
-      query($owner: String!, $repo: String!, $prNumber: Int!) {
+      query($owner: String!, $repo: String!, $prNumber: Int!, $cursor: String) {
         repository(owner: $owner, name: $repo) {
           pullRequest(number: $prNumber) {
-            reviewThreads(first: 100) {
+            reviewThreads(first: 100, after: $cursor) {
               nodes {
                 id
                 isResolved
@@ -563,6 +567,10 @@ export class GitHubClient {
                   }
                 }
               }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
             }
           }
         }
@@ -570,17 +578,34 @@ export class GitHubClient {
     `;
 
     try {
-      const result = await this.octokit.graphql<ReviewThreadsResponse>(
-        query,
-        { owner, repo, prNumber }
-      );
+      const allThreads: Array<{
+        id: string;
+        isResolved: boolean;
+        firstCommentBody: string;
+      }> = [];
+      let cursor: string | null = null;
+      let hasNextPage = true;
 
-      const threads = result.repository.pullRequest.reviewThreads.nodes;
-      return threads.map((thread) => ({
-        id: thread.id,
-        isResolved: thread.isResolved,
-        firstCommentBody: thread.comments.nodes[0]?.body ?? "",
-      }));
+      while (hasNextPage) {
+        const result = await this.octokit.graphql<ReviewThreadsResponse>(
+          query,
+          { owner, repo, prNumber, cursor }
+        );
+
+        const threads = result.repository.pullRequest.reviewThreads.nodes;
+        allThreads.push(
+          ...threads.map((thread) => ({
+            id: thread.id,
+            isResolved: thread.isResolved,
+            firstCommentBody: thread.comments.nodes[0]?.body ?? "",
+          }))
+        );
+
+        hasNextPage = result.repository.pullRequest.reviewThreads.pageInfo.hasNextPage;
+        cursor = result.repository.pullRequest.reviewThreads.pageInfo.endCursor;
+      }
+
+      return allThreads;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : String(error);
