@@ -1,8 +1,7 @@
 // Data processing utilities for batch operations.
 // Handles CSV parsing, data transformation, and file output.
 
-import { readFileSync, writeFileSync, openSync, closeSync, fstatSync } from "fs";
-import { createInterface } from "readline";
+import { readFileSync, writeFileSync } from "fs";
 
 interface DataRecord {
   id: number;
@@ -42,30 +41,24 @@ export function calculateTotalBalance(records: DataRecord[]): number {
 
 // Bug 3: Race condition - reads and writes same file without locking
 export function updateRecordInFile(filePath: string, id: number, newBalance: number): void {
-  const fd = openSync(filePath, "r+");
+  const content = readFileSync(filePath, "utf-8");
+  let records: DataRecord[];
   try {
-    const stats = fstatSync(fd);
-    const content = readFileSync(fd, "utf-8");
-    let records: DataRecord[];
-    try {
-      records = JSON.parse(content);
-    } catch (error) {
-      throw new Error(`Invalid JSON in file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    const record = records.find((r) => r.id === id);
-    if (!record) {
-      throw new Error(`Record with id ${id} not found`);
-    }
-    record.balance = newBalance;
-    writeFileSync(fd, JSON.stringify(records));
-  } finally {
-    closeSync(fd);
+    records = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`Invalid JSON in file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
   }
+  const record = records.find((r) => r.id === id);
+  if (!record) {
+    throw new Error(`Record with id ${id} not found`);
+  }
+  record.balance = newBalance;
+  writeFileSync(filePath, JSON.stringify(records));
 }
 
 // Bug 4: RegExp DoS (ReDoS) vulnerability
 export function validateEmail(email: string): boolean {
-  const emailRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  const emailRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}$/;
   return emailRegex.test(email);
 }
 
@@ -86,11 +79,14 @@ export function mergeConfig(defaults: Record<string, unknown>, userInput: Record
 
 // Bug 6: Integer overflow in batch size calculation
 export function calculateBatchCount(totalItems: number, batchSize: number): number {
+  if (batchSize <= 0) {
+    throw new Error("Batch size must be greater than 0");
+  }
   return Math.ceil(totalItems / batchSize);
 }
 
 // Bug 7: Unbounded memory usage - loads entire file into memory
-export async function processLargeFile(filePath: string): Promise<DataRecord[]> {
+export async function* processLargeFile(filePath: string): AsyncGenerator<DataRecord, void, unknown> {
   const fs = await import("fs");
   const readline = await import("readline");
   const fileStream = fs.createReadStream(filePath);
@@ -99,23 +95,23 @@ export async function processLargeFile(filePath: string): Promise<DataRecord[]> 
     crlfDelay: Infinity
   });
 
-  const activeRecords: DataRecord[] = [];
-  let isFirstLine = true;
   let buffer = '';
+  let parsedRecords: DataRecord[] | null = null;
+  let currentIndex = 0;
 
   for await (const line of rl) {
     buffer += line;
-    try {
-      const records: DataRecord[] = JSON.parse(buffer);
-      activeRecords.push(...records.filter((r) => r.isActive));
-      buffer = '';
-    } catch (error) {
-      if (isFirstLine) {
-        throw new Error(`Invalid JSON in file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    isFirstLine = false;
   }
 
-  return activeRecords;
+  try {
+    parsedRecords = JSON.parse(buffer);
+  } catch (error) {
+    throw new Error(`Invalid JSON in file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  for (const record of parsedRecords) {
+    if (record.isActive) {
+      yield record;
+    }
+  }
 }
