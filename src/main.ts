@@ -121,7 +121,6 @@ class BugHunterDaemon {
     // Verify Claude authentication
     if (
       !process.env.CLAUDE_CODE_OAUTH_TOKEN &&
-      !process.env.ANTHROPIC_AUTH_TOKEN &&
       !process.env.ANTHROPIC_API_KEY
     ) {
       // No env-based auth; check for file-based credentials (Linux)

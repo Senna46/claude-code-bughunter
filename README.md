@@ -20,6 +20,56 @@ Monitors open pull requests for new commits, analyzes diffs for potential bugs u
 - **`git`**: For repository operations
 - **Node.js** >= 18.0.0 (for local installation) or **Docker** (for containerized deployment)
 
+## Authentication Setup
+
+BugHunter requires authentication for both GitHub and Claude Code. The setup differs by platform.
+
+### GitHub Authentication (`gh` CLI)
+
+| Environment             | Method                                                                                          |
+| ----------------------- | ----------------------------------------------------------------------------------------------- |
+| **Local (Linux/macOS)** | Run `gh auth login` — the token is stored in `~/.config/gh/hosts.yml` (Linux) or macOS Keychain |
+| **Docker on Linux**     | Auto-mounted via `docker-compose.yml` volume (`~/.config/gh:/root/.config/gh:ro`)               |
+| **Docker on macOS**     | Set `GH_TOKEN` in `.env` (macOS Keychain is inaccessible from containers)                       |
+
+To obtain `GH_TOKEN`:
+
+```bash
+gh auth token
+```
+
+### Claude Code Authentication
+
+Claude Code supports two authentication methods:
+
+#### Option 1: OAuth Token (`CLAUDE_CODE_OAUTH_TOKEN`) — for Pro/Max/Team plan
+
+This uses your Claude Pro/Max/Team subscription. The token is valid for approximately 1 year.
+
+**How to generate the token:**
+
+```bash
+claude setup-token
+```
+
+This command outputs a long-lived OAuth token. Copy and set it:
+
+| Environment         | Method                                                                                    |
+| ------------------- | ----------------------------------------------------------------------------------------- |
+| **Local (Linux)**   | Not needed — credentials are stored in `~/.claude/.credentials.json` after `claude login` |
+| **Local (macOS)**   | Not needed — credentials are stored in macOS Keychain after `claude login`                |
+| **Docker on Linux** | Auto-mounted via `docker-compose.yml` volume (`~/.claude:/root/.claude`)                  |
+| **Docker on macOS** | Set `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (macOS Keychain is inaccessible from containers)  |
+
+#### Option 2: API Key (`ANTHROPIC_API_KEY`) — for pay-as-you-go billing
+
+This uses the Anthropic API directly with pay-as-you-go billing.
+
+1. Create an API key at [console.anthropic.com](https://console.anthropic.com/)
+2. Set `ANTHROPIC_API_KEY` in `.env` or as an environment variable
+
+> **Note**: API key authentication works the same way on all platforms (local and Docker).
+
 ## Quick Start
 
 ### Local Installation
@@ -34,7 +84,7 @@ npm install
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your settings
+# Edit .env with your settings (see Configuration section)
 
 # Build and run
 npm run build
@@ -51,7 +101,7 @@ npm run dev
 git clone https://github.com/Senna46/claude-code-bughunter.git
 cd claude-code-bughunter
 cp .env.example .env
-# Edit .env with your settings
+# Edit .env with your settings (see Configuration section)
 
 # macOS only: Add authentication tokens to .env
 # gh auth token            → set GH_TOKEN in .env
@@ -65,28 +115,41 @@ docker compose up -d
 docker compose logs -f
 ```
 
-> **Note (macOS)**: Both gh CLI and Claude Code store credentials in macOS Keychain, which is inaccessible from Docker containers. You must set `GH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` in `.env`. Run `gh auth token` and `claude setup-token` to obtain the values. On Linux, file-based authentication works automatically via volume mounts.
-
 ## Configuration
 
 Copy `.env.example` to `.env` and configure:
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `BUGHUNTER_GITHUB_ORGS` | Yes* | - | GitHub owners to monitor: users or orgs (comma-separated) |
-| `BUGHUNTER_GITHUB_REPOS` | Yes* | - | Specific repos to monitor (`owner/repo`, comma-separated) |
-| `BUGHUNTER_POLL_INTERVAL` | No | `60` | Polling interval in seconds |
-| `BUGHUNTER_BOT_NAME` | No | `bughunter` | Bot name for approval commands |
-| `BUGHUNTER_AUTOFIX_MODE` | No | `branch` | Autofix mode: `off`, `branch`, `commit`, `pr` |
-| `BUGHUNTER_WORK_DIR` | No | `~/.bughunter/repos` | Directory for cloning repositories |
-| `BUGHUNTER_MAX_DIFF_SIZE` | No | `100000` | Max diff size (chars) to analyze |
-| `BUGHUNTER_CLAUDE_MODEL` | No | CLI default | Claude model to use |
-| `BUGHUNTER_LOG_LEVEL` | No | `info` | Log level (debug/info/warn/error) |
-| `BUGHUNTER_DB_PATH` | No | `~/.bughunter/state.db` | SQLite database path |
-| `GH_TOKEN` | macOS Docker only | - | GitHub token for Docker on macOS (`gh auth token`) |
-| `CLAUDE_CODE_OAUTH_TOKEN` | macOS Docker only | - | Claude OAuth token for Docker on macOS (`claude setup-token`) |
+### Target Repositories
+
+| Variable                 | Required | Default | Description                                               |
+| ------------------------ | -------- | ------- | --------------------------------------------------------- |
+| `BUGHUNTER_GITHUB_ORGS`  | Yes\*    | -       | GitHub owners to monitor: users or orgs (comma-separated) |
+| `BUGHUNTER_GITHUB_REPOS` | Yes\*    | -       | Specific repos to monitor (`owner/repo`, comma-separated) |
 
 \* At least one of `BUGHUNTER_GITHUB_ORGS` or `BUGHUNTER_GITHUB_REPOS` must be set.
+
+### Behavior
+
+| Variable                  | Required | Default                 | Description                                   |
+| ------------------------- | -------- | ----------------------- | --------------------------------------------- |
+| `BUGHUNTER_POLL_INTERVAL` | No       | `60`                    | Polling interval in seconds                   |
+| `BUGHUNTER_BOT_NAME`      | No       | `bughunter`             | Bot name for approval commands                |
+| `BUGHUNTER_AUTOFIX_MODE`  | No       | `branch`                | Autofix mode: `off`, `branch`, `commit`, `pr` |
+| `BUGHUNTER_WORK_DIR`      | No       | `~/.bughunter/repos`    | Directory for cloning repositories            |
+| `BUGHUNTER_MAX_DIFF_SIZE` | No       | `100000`                | Max diff size (chars) to analyze              |
+| `BUGHUNTER_CLAUDE_MODEL`  | No       | CLI default             | Claude model to use                           |
+| `BUGHUNTER_LOG_LEVEL`     | No       | `info`                  | Log level (debug/info/warn/error)             |
+| `BUGHUNTER_DB_PATH`       | No       | `~/.bughunter/state.db` | SQLite database path                          |
+
+### Authentication (Docker / Environment Variables)
+
+| Variable                  | Required          | Description                                 |
+| ------------------------- | ----------------- | ------------------------------------------- |
+| `GH_TOKEN`                | macOS Docker only | GitHub token (`gh auth token`)              |
+| `CLAUDE_CODE_OAUTH_TOKEN` | macOS Docker only | Claude OAuth token (`claude setup-token`)   |
+| `ANTHROPIC_API_KEY`       | Alternative       | Anthropic API key for pay-as-you-go billing |
+
+> **Note**: On Linux, file-based authentication works automatically via volume mounts in `docker-compose.yml`. You only need to set environment variables when running Docker on macOS (where credentials are stored in Keychain).
 
 ## Workflow
 

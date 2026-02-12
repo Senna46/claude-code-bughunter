@@ -38,10 +38,6 @@ fi
 # Validate authentication
 if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
   echo "[entrypoint] CLAUDE_CODE_OAUTH_TOKEN is set. Using OAuth authentication."
-elif [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
-  echo "[entrypoint] ANTHROPIC_AUTH_TOKEN is set. Using OAuth authentication."
-  # Also export as CLAUDE_CODE_OAUTH_TOKEN for compatibility
-  export CLAUDE_CODE_OAUTH_TOKEN="$ANTHROPIC_AUTH_TOKEN"
 elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   echo "[entrypoint] ANTHROPIC_API_KEY is set. Using API key authentication (pay-as-you-go billing)."
 elif [ -f "/root/.claude/.credentials.json" ]; then
