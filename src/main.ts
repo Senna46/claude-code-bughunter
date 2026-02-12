@@ -96,7 +96,7 @@ class BugHunterDaemon {
       if (!trimmedToken) {
         throw new Error("GH_TOKEN is set but empty.");
       }
-      const validPrefixes = ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'];
+      const validPrefixes = ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'github_pat_'];
       const hasValidPrefix = validPrefixes.some(prefix => trimmedToken.startsWith(prefix));
       if (!hasValidPrefix) {
         throw new Error(

@@ -32,7 +32,7 @@ export class GitHubClient {
     if (envToken && envToken.trim()) {
       const trimmedToken = envToken.trim();
       // Validate GitHub token format
-      const validPrefixes = ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'];
+      const validPrefixes = ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'github_pat_'];
       const hasValidPrefix = validPrefixes.some(prefix => trimmedToken.startsWith(prefix));
       if (!hasValidPrefix) {
         throw new Error(
