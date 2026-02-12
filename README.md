@@ -53,9 +53,9 @@ cd claude-code-bughunter
 cp .env.example .env
 # Edit .env with your settings
 
-# macOS only: Add GitHub token to .env
-# gh auth token
-# GH_TOKEN=<your-token>
+# macOS only: Add authentication tokens to .env
+# gh auth token            → set GH_TOKEN in .env
+# claude setup-token       → set CLAUDE_CODE_OAUTH_TOKEN in .env
 
 # Build and start
 docker compose build
@@ -65,7 +65,7 @@ docker compose up -d
 docker compose logs -f
 ```
 
-> **Note**: On macOS, gh CLI uses Keychain for authentication. Set `GH_TOKEN` in `.env` using `gh auth token`. On Linux, file-based authentication works automatically.
+> **Note (macOS)**: Both gh CLI and Claude Code store credentials in macOS Keychain, which is inaccessible from Docker containers. You must set `GH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` in `.env`. Run `gh auth token` and `claude setup-token` to obtain the values. On Linux, file-based authentication works automatically via volume mounts.
 
 ## Configuration
 
@@ -83,7 +83,8 @@ Copy `.env.example` to `.env` and configure:
 | `BUGHUNTER_CLAUDE_MODEL` | No | CLI default | Claude model to use |
 | `BUGHUNTER_LOG_LEVEL` | No | `info` | Log level (debug/info/warn/error) |
 | `BUGHUNTER_DB_PATH` | No | `~/.bughunter/state.db` | SQLite database path |
-| `GH_TOKEN` | macOS Docker only | - | GitHub token for Docker on macOS (get with `gh auth token`) |
+| `GH_TOKEN` | macOS Docker only | - | GitHub token for Docker on macOS (`gh auth token`) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | macOS Docker only | - | Claude OAuth token for Docker on macOS (`claude setup-token`) |
 
 \* At least one of `BUGHUNTER_GITHUB_ORGS` or `BUGHUNTER_GITHUB_REPOS` must be set.
 

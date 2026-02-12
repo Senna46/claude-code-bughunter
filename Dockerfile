@@ -56,4 +56,8 @@ RUN mkdir -p /data/repos /data/db
 ENV BUGHUNTER_WORK_DIR=/data/repos
 ENV BUGHUNTER_DB_PATH=/data/db/state.db
 
-CMD ["node", "dist/main.js"]
+# Copy entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]

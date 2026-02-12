@@ -118,6 +118,25 @@ class BugHunterDaemon {
       );
     }
 
+    // Verify Claude authentication
+    if (
+      !process.env.CLAUDE_CODE_OAUTH_TOKEN &&
+      !process.env.ANTHROPIC_AUTH_TOKEN &&
+      !process.env.ANTHROPIC_API_KEY
+    ) {
+      // No env-based auth; check for file-based credentials (Linux)
+      const { existsSync } = await import("fs");
+      const homeDir = process.env.HOME ?? "/root";
+      const credFile = `${homeDir}/.claude/.credentials.json`;
+      if (!existsSync(credFile)) {
+        logger.warn(
+          "No Claude authentication detected. " +
+            "On macOS Docker, set CLAUDE_CODE_OAUTH_TOKEN (run 'claude setup-token' to generate). " +
+            "On Linux, ensure ~/.claude is mounted and contains .credentials.json."
+        );
+      }
+    }
+
     // Check git
     try {
       await execFileAsync("git", ["--version"]);
