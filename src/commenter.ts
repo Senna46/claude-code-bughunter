@@ -125,26 +125,35 @@ ${SUMMARY_MARKER_END}`;
       return;
     }
 
-    // Build review comments for bugs that have valid line numbers
-    const reviewComments: Array<{
-      path: string;
-      line: number;
-      body: string;
-    }> = [];
+    // Parse the diff to extract valid file paths and line ranges
+    const diff = await this.github.getPullRequestDiff(
+      pr.owner,
+      pr.repo,
+      pr.number
+    );
+    const validRanges = this.parseDiffLineRanges(diff);
+
+    // Separate bugs into inline-eligible and fallback
+    const inlineBugs: Bug[] = [];
+    const fallbackBugs: Bug[] = [];
 
     for (const bug of analysis.bugs) {
       const line = bug.endLine ?? bug.startLine;
-      if (line && bug.filePath) {
-        reviewComments.push({
-          path: bug.filePath,
-          line,
-          body: this.buildInlineCommentBody(bug),
-        });
+      if (line && bug.filePath && this.isLineInDiff(bug.filePath, line, validRanges)) {
+        inlineBugs.push(bug);
+      } else {
+        fallbackBugs.push(bug);
       }
     }
 
-    // Post bugs with line numbers as inline review comments
-    if (reviewComments.length > 0) {
+    // Post inline bugs as a PR review
+    if (inlineBugs.length > 0) {
+      const reviewComments = inlineBugs.map((bug) => ({
+        path: bug.filePath,
+        line: (bug.endLine ?? bug.startLine)!,
+        body: this.buildInlineCommentBody(bug),
+      }));
+
       const reviewBody = this.buildReviewSummaryBody(analysis);
 
       try {
@@ -162,24 +171,69 @@ ${SUMMARY_MARKER_END}`;
       } catch (error) {
         const message =
           error instanceof Error ? error.message : String(error);
-        logger.error("Failed to post review comments. Falling back to issue comment.", {
+        logger.error("Failed to post inline review. Falling back to issue comment for all bugs.", {
           error: message,
+          inlineBugCount: inlineBugs.length,
         });
-
-        // Fallback: post as a single issue comment
-        await this.postBugsAsIssueComment(pr, analysis);
+        // Move all inline bugs to fallback
+        fallbackBugs.push(...inlineBugs);
       }
     }
 
-    // Post bugs without line numbers as a single issue comment
-    const bugsWithoutLines = analysis.bugs.filter(
-      (b) => !b.startLine && !b.endLine
-    );
-    if (bugsWithoutLines.length > 0 && reviewComments.length > 0) {
-      // These are already covered in the review; skip
-    } else if (bugsWithoutLines.length > 0 && reviewComments.length === 0) {
-      await this.postBugsAsIssueComment(pr, analysis);
+    // Post remaining bugs as an issue comment
+    if (fallbackBugs.length > 0) {
+      const fallbackAnalysis: AnalysisResult = {
+        ...analysis,
+        bugs: fallbackBugs,
+      };
+      await this.postBugsAsIssueComment(pr, fallbackAnalysis);
+      logger.info(
+        `Posted ${fallbackBugs.length} bug(s) as issue comment (not in diff range).`
+      );
     }
+  }
+
+  // Parse diff to extract valid file + line ranges that can receive inline comments
+  private parseDiffLineRanges(diff: string): Map<string, Array<{ start: number; end: number }>> {
+    const ranges = new Map<string, Array<{ start: number; end: number }>>();
+    let currentFile: string | null = null;
+
+    for (const line of diff.split("\n")) {
+      // Match diff file header: +++ b/path/to/file
+      if (line.startsWith("+++ b/")) {
+        currentFile = line.substring(6);
+        if (!ranges.has(currentFile)) {
+          ranges.set(currentFile, []);
+        }
+        continue;
+      }
+
+      // Match hunk header: @@ -oldStart,oldCount +newStart,newCount @@
+      if (currentFile && line.startsWith("@@")) {
+        const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+        if (match) {
+          const start = parseInt(match[1], 10);
+          const count = match[2] !== undefined ? parseInt(match[2], 10) : 1;
+          const end = start + count - 1;
+          ranges.get(currentFile)!.push({ start, end: Math.max(start, end) });
+        }
+      }
+    }
+
+    return ranges;
+  }
+
+  // Check if a specific line in a file falls within the diff ranges
+  private isLineInDiff(
+    filePath: string,
+    line: number,
+    validRanges: Map<string, Array<{ start: number; end: number }>>
+  ): boolean {
+    const fileRanges = validRanges.get(filePath);
+    if (!fileRanges) {
+      return false;
+    }
+    return fileRanges.some((range) => line >= range.start && line <= range.end);
   }
 
   private buildReviewSummaryBody(analysis: AnalysisResult): string {
