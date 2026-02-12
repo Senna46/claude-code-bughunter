@@ -15,6 +15,7 @@ import { logger, setLogLevel } from "./logger.js";
 import { PrMonitor } from "./prMonitor.js";
 import type { PrWithNewCommits } from "./prMonitor.js";
 import { StateStore } from "./state.js";
+import { validateGitHubToken } from "./tokenValidator.js";
 import type { Bug, BugRecord, Config, PullRequest } from "./types.js";
 
 class BugHunterDaemon {
@@ -79,7 +80,16 @@ class BugHunterDaemon {
 
     // Check gh CLI or validate GH_TOKEN
     const ghToken = process.env.GH_TOKEN;
-    if (!ghToken) {
+    const tokenValidationError = validateGitHubToken(ghToken);
+
+    if (ghToken && tokenValidationError) {
+      // If GH_TOKEN is set but invalid, throw error
+      throw new Error(tokenValidationError);
+    } else if (ghToken && !tokenValidationError) {
+      // If GH_TOKEN is set and valid, log it
+      logger.debug("Using GH_TOKEN environment variable for authentication.");
+    } else {
+      // If GH_TOKEN is not set, check gh CLI auth
       try {
         const { stdout } = await execFileAsync("gh", ["auth", "status"]);
         logger.debug("gh CLI auth status OK.", {
@@ -90,20 +100,6 @@ class BugHunterDaemon {
           "gh CLI is not authenticated. Run 'gh auth login' first."
         );
       }
-    } else {
-      // Validate GH_TOKEN format even when set
-      const trimmedToken = ghToken.trim();
-      if (!trimmedToken) {
-        throw new Error("GH_TOKEN is set but empty.");
-      }
-      const validPrefixes = ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'];
-      const hasValidPrefix = validPrefixes.some(prefix => trimmedToken.startsWith(prefix));
-      if (!hasValidPrefix) {
-        throw new Error(
-          `Invalid GH_TOKEN format. GitHub tokens should start with one of: ${validPrefixes.join(', ')}`
-        );
-      }
-      logger.debug("Using GH_TOKEN environment variable for authentication.");
     }
 
     // Check claude CLI
