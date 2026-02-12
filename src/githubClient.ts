@@ -29,9 +29,18 @@ export class GitHubClient {
   static async createFromGhCli(): Promise<GitHubClient> {
     // First, check if GH_TOKEN environment variable is set (required for Docker on macOS)
     const envToken = process.env.GH_TOKEN;
-    if (envToken) {
+    if (envToken && envToken.trim()) {
+      const trimmedToken = envToken.trim();
+      // Validate GitHub token format
+      const validPrefixes = ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'];
+      const hasValidPrefix = validPrefixes.some(prefix => trimmedToken.startsWith(prefix));
+      if (!hasValidPrefix) {
+        throw new Error(
+          `Invalid GH_TOKEN format. GitHub tokens should start with one of: ${validPrefixes.join(', ')}`
+        );
+      }
       logger.info("GitHub client authenticated via GH_TOKEN environment variable.");
-      return new GitHubClient(envToken);
+      return new GitHubClient(trimmedToken);
     }
 
     // Fall back to gh CLI token (works on Linux and native installs)

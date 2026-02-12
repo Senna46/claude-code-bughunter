@@ -77,8 +77,9 @@ class BugHunterDaemon {
     const { promisify } = await import("util");
     const execFileAsync = promisify(execFile);
 
-    // Check gh CLI (skip if GH_TOKEN is set)
-    if (!process.env.GH_TOKEN) {
+    // Check gh CLI or validate GH_TOKEN
+    const ghToken = process.env.GH_TOKEN;
+    if (!ghToken) {
       try {
         const { stdout } = await execFileAsync("gh", ["auth", "status"]);
         logger.debug("gh CLI auth status OK.", {
@@ -90,6 +91,18 @@ class BugHunterDaemon {
         );
       }
     } else {
+      // Validate GH_TOKEN format even when set
+      const trimmedToken = ghToken.trim();
+      if (!trimmedToken) {
+        throw new Error("GH_TOKEN is set but empty.");
+      }
+      const validPrefixes = ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'];
+      const hasValidPrefix = validPrefixes.some(prefix => trimmedToken.startsWith(prefix));
+      if (!hasValidPrefix) {
+        throw new Error(
+          `Invalid GH_TOKEN format. GitHub tokens should start with one of: ${validPrefixes.join(', ')}`
+        );
+      }
       logger.debug("Using GH_TOKEN environment variable for authentication.");
     }
 
