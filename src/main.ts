@@ -79,7 +79,13 @@ class BugHunterDaemon {
 
     // Check gh CLI or validate GH_TOKEN
     const ghToken = process.env.GH_TOKEN;
-    if (!ghToken) {
+    if (ghToken && ghToken.trim()) {
+      // Validate GH_TOKEN format when meaningfully set
+      const trimmedToken = ghToken.trim();
+      validateGitHubToken(trimmedToken);
+      logger.debug("Using GH_TOKEN environment variable for authentication.");
+    } else {
+      // Fall back to gh CLI if GH_TOKEN is not set or empty/whitespace-only
       try {
         const { stdout } = await execFileAsync("gh", ["auth", "status"]);
         logger.debug("gh CLI auth status OK.", {
@@ -90,14 +96,6 @@ class BugHunterDaemon {
           "gh CLI is not authenticated. Run 'gh auth login' first."
         );
       }
-    } else {
-      // Validate GH_TOKEN format even when set
-      const trimmedToken = ghToken.trim();
-      if (!trimmedToken) {
-        throw new Error("GH_TOKEN is set but empty.");
-      }
-      validateGitHubToken(trimmedToken);
-      logger.debug("Using GH_TOKEN environment variable for authentication.");
     }
 
     // Check claude CLI
