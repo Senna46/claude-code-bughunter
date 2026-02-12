@@ -47,9 +47,14 @@ const BUG_ANALYSIS_SCHEMA = JSON.stringify({
         required: ["title", "severity", "description", "filePath"],
       },
     },
+    overview: {
+      type: "string",
+      description:
+        "Concise description of what the PR changes and their purpose. Focus on what was changed and why, not on bugs found.",
+    },
     summary: {
       type: "string",
-      description: "Brief overview of changes and potential risks",
+      description: "Brief summary of bugs found and their potential risks",
     },
     riskLevel: {
       type: "string",
@@ -57,7 +62,7 @@ const BUG_ANALYSIS_SCHEMA = JSON.stringify({
       description: "Overall risk level of the changes",
     },
   },
-  required: ["bugs", "summary", "riskLevel"],
+  required: ["bugs", "overview", "summary", "riskLevel"],
 });
 
 const ANALYSIS_SYSTEM_PROMPT = `You are a senior code reviewer and bug hunter. Your task is to analyze a PR diff and identify real bugs, security vulnerabilities, and significant code quality issues.
@@ -112,6 +117,7 @@ export class Analyzer {
 
     return {
       bugs,
+      overview: claudeOutput.overview,
       summary: claudeOutput.summary,
       riskLevel: claudeOutput.riskLevel,
       commitSha,
@@ -132,7 +138,7 @@ PR Title: ${prTitle}
 ${diff}
 \`\`\`
 
-Identify all real bugs and return your findings as structured JSON.`;
+Write a clear and concise overview of what this PR changes and why. Then identify all real bugs and return your findings as structured JSON.`;
   }
 
   // ============================================================
@@ -250,6 +256,7 @@ Identify all real bugs and return your findings as structured JSON.`;
       // Return empty result on parse failure
       return {
         bugs: [],
+        overview: "Analysis output could not be parsed.",
         summary: "Analysis output could not be parsed.",
         riskLevel: "low",
       };
@@ -260,6 +267,9 @@ Identify all real bugs and return your findings as structured JSON.`;
     const output = data as ClaudeAnalysisOutput;
     if (!output || !Array.isArray(output.bugs)) {
       throw new Error("Invalid analysis output: 'bugs' array is missing.");
+    }
+    if (!output.overview || typeof output.overview !== "string") {
+      output.overview = "No overview provided.";
     }
     if (!output.summary || typeof output.summary !== "string") {
       output.summary = "No summary provided.";

@@ -509,4 +509,126 @@ export class GitHubClient {
       return null;
     }
   }
+
+  // ============================================================
+  // Review Threads (GraphQL)
+  // ============================================================
+
+  async getReviewThreads(
+    owner: string,
+    repo: string,
+    prNumber: number
+  ): Promise<
+    Array<{
+      id: string;
+      isResolved: boolean;
+      firstCommentBody: string;
+    }>
+  > {
+    logger.debug("Fetching review threads via GraphQL.", {
+      owner,
+      repo,
+      prNumber,
+    });
+
+    interface ReviewThreadsResponse {
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: Array<{
+              id: string;
+              isResolved: boolean;
+              comments: {
+                nodes: Array<{
+                  body: string;
+                }>;
+              };
+            }>;
+          };
+        };
+      };
+    }
+
+    const query = `
+      query($owner: String!, $repo: String!, $prNumber: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $prNumber) {
+            reviewThreads(first: 100) {
+              nodes {
+                id
+                isResolved
+                comments(first: 1) {
+                  nodes {
+                    body
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      const result = await this.octokit.graphql<ReviewThreadsResponse>(
+        query,
+        { owner, repo, prNumber }
+      );
+
+      const threads = result.repository.pullRequest.reviewThreads.nodes;
+      return threads.map((thread) => ({
+        id: thread.id,
+        isResolved: thread.isResolved,
+        firstCommentBody: thread.comments.nodes[0]?.body ?? "",
+      }));
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      logger.error("Failed to fetch review threads.", {
+        owner,
+        repo,
+        prNumber,
+        error: message,
+      });
+      return [];
+    }
+  }
+
+  async resolveReviewThread(threadId: string): Promise<boolean> {
+    logger.debug("Resolving review thread via GraphQL.", { threadId });
+
+    interface ResolveResponse {
+      resolveReviewThread: {
+        thread: {
+          isResolved: boolean;
+        };
+      };
+    }
+
+    const mutation = `
+      mutation($threadId: ID!) {
+        resolveReviewThread(input: { threadId: $threadId }) {
+          thread {
+            isResolved
+          }
+        }
+      }
+    `;
+
+    try {
+      const result = await this.octokit.graphql<ResolveResponse>(
+        mutation,
+        { threadId }
+      );
+      return result.resolveReviewThread.thread.isResolved;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      logger.error("Failed to resolve review thread.", {
+        threadId,
+        error: message,
+      });
+      return false;
+    }
+  }
 }
