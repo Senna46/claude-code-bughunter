@@ -246,11 +246,11 @@ class BugHunterDaemon {
       // 4. Update PR body with summary
       await this.commenter.updatePrSummary(pr, analysis);
 
-      // 4.5. Resolve existing BugHunter review threads before posting new ones
-      await this.commenter.resolveExistingBugThreads(pr);
-
       // 5. Post review comments
       await this.commenter.postReviewComments(pr, analysis);
+
+      // 5.5. Resolve existing BugHunter review threads after posting new ones
+      await this.commenter.resolveExistingBugThreads(pr);
 
       // 6. Save bugs to state
       if (analysis.bugs.length > 0) {
