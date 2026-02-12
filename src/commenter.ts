@@ -233,26 +233,46 @@ ${SUMMARY_MARKER_END}`;
       } catch (error) {
         const message =
           error instanceof Error ? error.message : String(error);
-        logger.error("Failed to post inline review. Posting all bugs in review body.", {
+        logger.error("Failed to post inline review. Attempting review body without inline comments.", {
           error: message,
           inlineBugCount: inlineBugs.length,
         });
-        // If inline comments fail, post all bugs in review body only
-        const allFallbackBody = this.buildReviewSummaryBody(
-          analysis,
-          analysis.bugs
-        );
-        await this.github.createReview(
-          pr.owner,
-          pr.repo,
-          pr.number,
-          analysis.commitSha,
-          allFallbackBody,
-          []
-        );
-        logger.info(
-          `Posted review body with all ${analysis.bugs.length} bug(s) (inline posting failed).`
-        );
+
+        // First fallback: try createReview without inline comments
+        try {
+          const allFallbackBody = this.buildReviewSummaryBody(
+            analysis,
+            analysis.bugs
+          );
+          await this.github.createReview(
+            pr.owner,
+            pr.repo,
+            pr.number,
+            analysis.commitSha,
+            allFallbackBody,
+            []
+          );
+          logger.info(
+            `Posted review body with all ${analysis.bugs.length} bug(s) (inline posting failed).`
+          );
+        } catch (reviewError) {
+          // Second fallback: createReview API itself is broken,
+          // fall back to a different API (issue comment)
+          const reviewMessage =
+            reviewError instanceof Error ? reviewError.message : String(reviewError);
+          logger.error(
+            "Failed to post review body as well. Falling back to issue comment.",
+            {
+              originalError: message,
+              reviewError: reviewMessage,
+              bugCount: analysis.bugs.length,
+            }
+          );
+          await this.postBugsAsIssueComment(pr, analysis);
+          logger.info(
+            `Posted ${analysis.bugs.length} bug(s) as issue comment (review API failed).`
+          );
+        }
       }
     } else {
       // All bugs are fallback — post a review with body only (no inline comments)
