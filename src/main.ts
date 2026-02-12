@@ -91,7 +91,7 @@ class BugHunterDaemon {
         });
       } catch (error) {
         throw new Error(
-          "gh CLI is not authenticated. Run 'gh auth login' first."
+          "gh CLI is not authenticated. Set GH_TOKEN environment variable or run 'gh auth login'."
         );
       }
     }
