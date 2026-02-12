@@ -73,6 +73,7 @@ export interface Bug {
 
 export interface AnalysisResult {
   bugs: Bug[];
+  overview: string;
   summary: string;
   riskLevel: RiskLevel;
   commitSha: string;
@@ -89,6 +90,7 @@ export interface ClaudeAnalysisOutput {
     startLine?: number;
     endLine?: number;
   }>;
+  overview: string;
   summary: string;
   riskLevel: RiskLevel;
 }

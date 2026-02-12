@@ -80,7 +80,6 @@ export class Commenter {
     analysis: AnalysisResult,
     pr: PullRequest
   ): string {
-    const riskBadge = this.formatRiskBadge(analysis.riskLevel);
     const commitShort = analysis.commitSha.substring(0, 7);
     const commitUrl = `https://github.com/${pr.owner}/${pr.repo}/commit/${analysis.commitSha}`;
 
@@ -89,27 +88,85 @@ export class Commenter {
         ? `Found **${analysis.bugs.length} potential issue(s)**.`
         : "No issues found.";
 
-    return `${SUMMARY_MARKER_START}
-
-> [!NOTE]
-> ${riskBadge}
->
+    // Build bug summary section if there are bugs
+    const bugSummarySection =
+      analysis.bugs.length > 0
+        ? `>
+> **Bugs Found**
 > ${analysis.summary}
 >
 > ${bugCountText}
->
+`
+        : `>
+> ${bugCountText}
+`;
+
+    return `${SUMMARY_MARKER_START}
+
+> [!NOTE]
+> **Overview**
+> ${analysis.overview}
+${bugSummarySection}>
 > <sup>Written by [Claude Code BugHunter](https://github.com/Senna46/claude-code-bughunter) for commit [${commitShort}](${commitUrl}). This will update automatically on new commits.</sup>
 
 ${SUMMARY_MARKER_END}`;
   }
 
-  private formatRiskBadge(riskLevel: RiskLevel): string {
-    const labels: Record<RiskLevel, string> = {
-      low: "**Low Risk**",
-      medium: "**Medium Risk**",
-      high: "**High Risk**",
-    };
-    return labels[riskLevel];
+  // ============================================================
+  // Resolve Existing BugHunter Review Threads
+  // ============================================================
+
+  async resolveExistingBugThreads(pr: PullRequest): Promise<number> {
+    logger.info("Checking for existing BugHunter review threads to resolve.", {
+      owner: pr.owner,
+      repo: pr.repo,
+      prNumber: pr.number,
+    });
+
+    const threads = await this.github.getReviewThreads(
+      pr.owner,
+      pr.repo,
+      pr.number
+    );
+
+    // Filter for unresolved threads that contain the BugHunter bug ID marker
+    const bugHunterThreads = threads.filter(
+      (thread) =>
+        !thread.isResolved && thread.firstCommentBody.includes(BUG_ID_PREFIX)
+    );
+
+    if (bugHunterThreads.length === 0) {
+      logger.debug("No unresolved BugHunter review threads found.");
+      return 0;
+    }
+
+    logger.info(
+      `Found ${bugHunterThreads.length} unresolved BugHunter review thread(s) to resolve.`
+    );
+
+    let resolvedCount = 0;
+    for (const thread of bugHunterThreads) {
+      try {
+        const resolved = await this.github.resolveReviewThread(thread.id);
+        if (resolved) {
+          resolvedCount++;
+        }
+      } catch (error) {
+        // Log and continue — one failure should not block other resolutions
+        const message =
+          error instanceof Error ? error.message : String(error);
+        logger.warn("Failed to resolve a BugHunter review thread.", {
+          threadId: thread.id,
+          error: message,
+        });
+      }
+    }
+
+    logger.info(
+      `Resolved ${resolvedCount}/${bugHunterThreads.length} BugHunter review thread(s).`
+    );
+
+    return resolvedCount;
   }
 
   // ============================================================
