@@ -139,16 +139,37 @@ Copy `.env.example` to `.env` and configure:
 
 ### Behavior
 
-| Variable                  | Required | Default                 | Description                                   |
-| ------------------------- | -------- | ----------------------- | --------------------------------------------- |
-| `BUGHUNTER_POLL_INTERVAL` | No       | `60`                    | Polling interval in seconds                   |
-| `BUGHUNTER_BOT_NAME`      | No       | `bughunter`             | Bot name for approval commands                |
-| `BUGHUNTER_AUTOFIX_MODE`  | No       | `branch`                | Autofix mode: `off`, `branch`, `commit`, `pr` |
-| `BUGHUNTER_WORK_DIR`      | No       | `~/.bughunter/repos`    | Directory for cloning repositories            |
-| `BUGHUNTER_MAX_DIFF_SIZE` | No       | `100000`                | Max diff size (chars) to analyze              |
-| `BUGHUNTER_CLAUDE_MODEL`  | No       | CLI default             | Claude model to use                           |
-| `BUGHUNTER_LOG_LEVEL`     | No       | `info`                  | Log level (debug/info/warn/error)             |
-| `BUGHUNTER_DB_PATH`       | No       | `~/.bughunter/state.db` | SQLite database path                          |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BUGHUNTER_POLL_INTERVAL` | No | `60` | Polling interval in seconds |
+| `BUGHUNTER_BOT_NAME` | No | `bughunter` | Bot name for approval commands |
+| `BUGHUNTER_AUTOFIX_MODE` | No | `branch` | Autofix mode: `off`, `branch`, `commit`, `pr` |
+| `BUGHUNTER_WORK_DIR` | No | `~/.bughunter/repos` | Directory for cloning repositories |
+| `BUGHUNTER_MAX_DIFF_SIZE` | No | `100000` | Max diff size (chars) to analyze |
+| `BUGHUNTER_MAX_FILE_CONTEXT_SIZE` | No | `200000` | Max file context size (chars) |
+| `BUGHUNTER_CLAUDE_MODEL` | No | CLI default | Claude model to use |
+| `BUGHUNTER_LOG_LEVEL` | No | `info` | Log level (debug/info/warn/error) |
+| `BUGHUNTER_DB_PATH` | No | `~/.bughunter/state.db` | SQLite database path |
+
+### Analysis Performance (inspired by Cursor Bugbot)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BUGHUNTER_ANALYSIS_PASSES` | No | `3` | Number of parallel analysis passes |
+| `BUGHUNTER_VOTE_THRESHOLD` | No | `2` | Minimum votes for a bug to be reported |
+| `BUGHUNTER_ENABLE_VALIDATOR` | No | `true` | Enable bug validation step |
+| `BUGHUNTER_VALIDATOR_MODEL` | No | - | Model to use for validation (default: same as analysis) |
+
+### Advanced Features
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BUGHUNTER_ENABLE_AGENTIC` | No | `false` | Enable agentic analysis for deep investigation |
+| `BUGHUNTER_AGENTIC_MAX_TURNS` | No | `10` | Max turns for agentic analysis |
+| `BUGHUNTER_ENABLE_DYNAMIC_CONTEXT` | No | `true` | Enable dynamic context discovery |
+| `BUGHUNTER_DYNAMIC_CONTEXT_MAX_FILES` | No | `10` | Max files to load dynamically |
+| `BUGHUNTER_DYNAMIC_CONTEXT_MAX_LINES` | No | `500` | Max lines per file |
+| `BUGHUNTER_CUSTOM_RULES_PATH` | No | - | Path to custom rules file (default: `BUGHUNTER.md`) |
 
 ### Authentication (Docker / Environment Variables)
 
@@ -206,6 +227,65 @@ docker compose down -v
 ```
 
 > The container persists state and cloned repos in a named volume `bughunter-data`.
+
+## Custom Rules
+
+BugHunter supports project-specific bug detection rules via a `BUGHUNTER.md` file. Place this file in your repository root or `.bughunter/` directory.
+
+### Example BUGHUNTER.md
+
+```markdown
+## Rule: No direct database queries in API handlers
+- severity: high
+- pattern: db\.query\(
+- filePattern: api/.*\.ts
+- checkType: must-not-contain
+
+All database queries must go through the repository layer.
+
+## Rule: Require input validation
+- severity: medium
+- pattern: \.validate\(
+- filePattern: api/.*\.ts
+- checkType: must-contain
+
+All API handlers must validate input with Zod.
+
+## Rule: No any type
+- severity: low
+- pattern: :\s*any
+- checkType: must-not-contain
+
+Avoid using the any type in TypeScript code.
+```
+
+### Default Rules
+
+BugHunter includes several default rules:
+
+- **Potential SQL Injection**: String concatenation in SQL queries
+- **Dangerous eval() Usage**: Using eval() with user input
+- **Potential Hardcoded Secret**: API keys, passwords in source code
+- **Explicit 'any' Type Usage**: Using TypeScript's `any` type
+- **Console.log in Production Code**: Debug console statements
+
+## Architecture
+
+BugHunter's analysis pipeline is inspired by Cursor Bugbot's approach:
+
+```mermaid
+flowchart LR
+    A[PR Diff] --> B[Parallel Analysis 3 passes]
+    B --> C[Majority Voting]
+    C --> D[Bug Validator]
+    D --> E[Custom Rules]
+    E --> F[Validated Bugs]
+```
+
+1. **Parallel Analysis**: Multiple passes with randomized diff ordering for diverse reasoning
+2. **Majority Voting**: Filter bugs that receive votes from multiple passes
+3. **Bug Validator**: Second-pass validation to reduce false positives
+4. **Custom Rules**: Project-specific checks from BUGHUNTER.md
 
 ### systemd (Linux/WSL2)
 
