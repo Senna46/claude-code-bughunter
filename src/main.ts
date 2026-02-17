@@ -10,6 +10,7 @@ import { Analyzer } from "./analyzer.js";
 import { ApprovalHandler } from "./approvalHandler.js";
 import { Commenter } from "./commenter.js";
 import { loadConfig } from "./config.js";
+import { DynamicContextManager } from "./dynamicContext.js";
 import { FixGenerator } from "./fixGenerator.js";
 import { GitHubClient } from "./githubClient.js";
 import { logger, setLogLevel } from "./logger.js";
@@ -242,25 +243,55 @@ class BugHunterDaemon {
         );
       }
 
-      // Fetch full source of changed files for richer analysis context
-      const changedFilePaths = this.analyzer.extractChangedFilePaths(diff);
-      const fileContents = new Map<string, string>();
-      for (const filePath of changedFilePaths) {
-        const content = await this.github.getFileContent(
+      // 1.6. Dynamic context discovery (or fall back to pre-fetching)
+      let fileContents: Map<string, string>;
+      
+      if (this.config.enableDynamicContext) {
+        // Use dynamic context discovery for token-efficient context loading
+        const contextManager = new DynamicContextManager(
+          this.config,
           pr.owner,
           pr.repo,
-          filePath,
-          pr.headSha
+          pr.headSha,
+          async (owner, repo, filePath, ref) => {
+            return this.github.getFileContent(owner, repo, filePath, ref);
+          }
         );
-        if (content !== null) {
-          fileContents.set(filePath, content);
-        }
-      }
-      if (fileContents.size > 0) {
+        
+        // Extract suspicious patterns from diff for prioritization
+        const suspiciousPatterns = DynamicContextManager.extractSuspiciousPatterns(diff);
+        
+        // Get context on-demand
+        fileContents = await contextManager.getContextForDiff(diff, suspiciousPatterns);
+        
         logger.info(
-          `Fetched ${fileContents.size} file(s) as analysis context.`,
-          { filePaths: [...fileContents.keys()] }
+          `Dynamic context discovery loaded ${fileContents.size} file(s).`,
+          { 
+            filePaths: [...fileContents.keys()],
+            suspiciousPatterns: suspiciousPatterns.slice(0, 5),
+          }
         );
+      } else {
+        // Fall back to pre-fetching all changed files
+        const changedFilePaths = this.analyzer.extractChangedFilePaths(diff);
+        fileContents = new Map<string, string>();
+        for (const filePath of changedFilePaths) {
+          const content = await this.github.getFileContent(
+            pr.owner,
+            pr.repo,
+            filePath,
+            pr.headSha
+          );
+          if (content !== null) {
+            fileContents.set(filePath, content);
+          }
+        }
+        if (fileContents.size > 0) {
+          logger.info(
+            `Pre-fetched ${fileContents.size} file(s) as analysis context.`,
+            { filePaths: [...fileContents.keys()] }
+          );
+        }
       }
 
       // 2. Analyze diff for bugs (with previous findings and file context)

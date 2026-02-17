@@ -26,6 +26,10 @@ export interface Config {
   // Agentic analysis settings
   enableAgenticAnalysis: boolean;
   agenticMaxTurns: number;
+  // Dynamic context discovery settings
+  enableDynamicContext: boolean;
+  dynamicContextMaxFiles: number;
+  dynamicContextMaxLines: number;
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
