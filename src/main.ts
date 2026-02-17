@@ -16,6 +16,7 @@ import { PrMonitor } from "./prMonitor.js";
 import type { PrWithNewCommits } from "./prMonitor.js";
 import { StateStore } from "./state.js";
 import type { Bug, BugRecord, Config, PullRequest } from "./types.js";
+import { BugValidator } from "./validator.js";
 
 class BugHunterDaemon {
   private config: Config;
@@ -26,6 +27,7 @@ class BugHunterDaemon {
   private commenter!: Commenter;
   private fixGenerator: FixGenerator;
   private approvalHandler!: ApprovalHandler;
+  private validator: BugValidator;
   private isShuttingDown = false;
 
   constructor(config: Config) {
@@ -33,6 +35,7 @@ class BugHunterDaemon {
     this.state = new StateStore(config.dbPath);
     this.analyzer = new Analyzer(config);
     this.fixGenerator = new FixGenerator(config);
+    this.validator = new BugValidator(config);
   }
 
   // ============================================================
@@ -266,28 +269,49 @@ class BugHunterDaemon {
         fileContents.size > 0 ? fileContents : undefined
       );
 
+      // 2.5. Validate bugs to reduce false positives
+      let validatedBugs = analysis.bugs;
+      if (this.config.enableValidator && analysis.bugs.length > 0) {
+        logger.info(`Validating ${analysis.bugs.length} detected bug(s)...`);
+        validatedBugs = await this.validator.validateBugs(
+          analysis.bugs,
+          diff,
+          fileContents.size > 0 ? fileContents : undefined
+        );
+        logger.info(`Validation complete: ${validatedBugs.length} bug(s) confirmed`, {
+          originalCount: analysis.bugs.length,
+          validatedCount: validatedBugs.length,
+        });
+      }
+
+      // Update analysis with validated bugs
+      const validatedAnalysis = {
+        ...analysis,
+        bugs: validatedBugs,
+      };
+
       // 3. Record all new commits as analyzed
       for (const sha of newCommitShas) {
         this.state.recordAnalyzedCommit(
           repoFullName,
           pr.number,
           sha,
-          analysis.bugs.length
+          validatedAnalysis.bugs.length
         );
       }
 
       // 4. Update PR body with summary
-      await this.commenter.updatePrSummary(pr, analysis);
+      await this.commenter.updatePrSummary(pr, validatedAnalysis);
 
       // 4.5. Resolve existing BugHunter review threads before posting new ones
       await this.commenter.resolveExistingBugThreads(pr);
 
       // 5. Post review comments
-      await this.commenter.postReviewComments(pr, analysis);
+      await this.commenter.postReviewComments(pr, validatedAnalysis);
 
       // 6. Save bugs to state
-      if (analysis.bugs.length > 0) {
-        const bugRecords: BugRecord[] = analysis.bugs.map((bug) => ({
+      if (validatedAnalysis.bugs.length > 0) {
+        const bugRecords: BugRecord[] = validatedAnalysis.bugs.map((bug) => ({
           id: bug.id,
           repo: repoFullName,
           prNumber: pr.number,
@@ -303,7 +327,7 @@ class BugHunterDaemon {
         this.state.saveBugs(bugRecords);
 
         // 7. Generate fixes based on autofix mode
-        await this.handleAutofix(pr, analysis.bugs, repoFullName);
+        await this.handleAutofix(pr, validatedAnalysis.bugs, repoFullName);
 
         // Set commit status - bugs found
         await this.github.createCommitStatus(
@@ -311,7 +335,7 @@ class BugHunterDaemon {
           pr.repo,
           pr.headSha,
           "error",
-          `Found ${analysis.bugs.length} bug(s)`
+          `Found ${validatedAnalysis.bugs.length} bug(s)`
         );
       } else {
         // Set commit status to success (green indicator) - no bugs
@@ -327,8 +351,8 @@ class BugHunterDaemon {
       logger.info(
         `Completed processing PR #${pr.number} in ${repoFullName}.`,
         {
-          bugsFound: analysis.bugs.length,
-          riskLevel: analysis.riskLevel,
+          bugsFound: validatedAnalysis.bugs.length,
+          riskLevel: validatedAnalysis.riskLevel,
         }
       );
     } catch (error) {
