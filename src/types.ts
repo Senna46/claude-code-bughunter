@@ -18,6 +18,11 @@ export interface Config {
   claudeModel: string | null;
   logLevel: LogLevel;
   dbPath: string;
+  // Parallel analysis settings (inspired by Cursor Bugbot)
+  analysisPasses: number;
+  voteThreshold: number;
+  enableValidator: boolean;
+  validatorModel: string | null;
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";

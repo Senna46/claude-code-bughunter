@@ -44,6 +44,18 @@ export function loadConfig(): Config {
   const defaultDbPath = join(homedir(), ".bughunter", "state.db");
   const dbPath = process.env.BUGHUNTER_DB_PATH?.trim() || defaultDbPath;
 
+  // Parallel analysis settings (inspired by Cursor Bugbot)
+  const analysisPasses = parsePositiveInt(
+    process.env.BUGHUNTER_ANALYSIS_PASSES,
+    3
+  );
+  const voteThreshold = parsePositiveInt(
+    process.env.BUGHUNTER_VOTE_THRESHOLD,
+    2
+  );
+  const enableValidator = process.env.BUGHUNTER_ENABLE_VALIDATOR?.trim().toLowerCase() !== "false";
+  const validatorModel = process.env.BUGHUNTER_VALIDATOR_MODEL?.trim() || null;
+
   return {
     githubOrgs,
     githubRepos,
@@ -56,6 +68,10 @@ export function loadConfig(): Config {
     claudeModel,
     logLevel,
     dbPath,
+    analysisPasses,
+    voteThreshold,
+    enableValidator,
+    validatorModel,
   };
 }
 

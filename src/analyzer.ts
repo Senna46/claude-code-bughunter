@@ -1,4 +1,5 @@
 // Bug analysis module for Claude Code BugHunter.
+// Implements parallel analysis with majority voting (inspired by Cursor Bugbot).
 // Uses `claude -p` CLI to analyze PR diffs for bugs, security issues,
 // and code quality problems. Returns structured results via JSON schema.
 // Limitations: Depends on claude CLI being installed and authenticated.
@@ -66,6 +67,7 @@ const BUG_ANALYSIS_SCHEMA = JSON.stringify({
   required: ["bugs", "overview", "summary", "riskLevel"],
 });
 
+// More aggressive prompt for bug detection (inspired by Cursor Bugbot's approach)
 const ANALYSIS_SYSTEM_PROMPT = `You are a senior code reviewer and bug hunter. Your task is to analyze a PR diff and identify real bugs, security vulnerabilities, and significant code quality issues.
 
 Rules:
@@ -85,7 +87,23 @@ Rules:
   - medium: Edge cases not handled, inconsistent behavior, i18n issues
   - low: Minor issues unlikely to cause problems in practice
 - Be precise and concise in descriptions.
-- If no real bugs are found, return an empty bugs array.`;
+- If no real bugs are found, return an empty bugs array.
+
+IMPORTANT: Be thorough and investigate any suspicious patterns. It is better to flag potential issues that can be filtered out later than to miss real bugs.`;
+
+// Interface for a single analysis pass result
+interface AnalysisPassResult {
+  passIndex: number;
+  output: ClaudeAnalysisOutput;
+  error?: Error;
+}
+
+// Interface for bug with vote count
+interface BugWithVotes {
+  bug: Bug;
+  voteCount: number;
+  passIndices: number[];
+}
 
 export class Analyzer {
   private config: Config;
@@ -95,7 +113,7 @@ export class Analyzer {
   }
 
   // ============================================================
-  // Main: Analyze a PR diff for bugs
+  // Main: Analyze a PR diff for bugs with parallel passes
   // ============================================================
 
   async analyzeDiff(
@@ -113,37 +131,366 @@ export class Analyzer {
       ? this.truncateFileContents(fileContents)
       : undefined;
 
-    const prompt = this.buildAnalysisPrompt(
-      truncatedDiff,
-      prTitle,
-      previousBugs,
-      truncatedFileContents
-    );
+    const numPasses = this.config.analysisPasses;
+    const voteThreshold = this.config.voteThreshold;
 
-    logger.info("Starting bug analysis via claude -p ...", {
+    logger.info("Starting parallel bug analysis via claude -p ...", {
       diffLength: truncatedDiff.length,
       originalDiffLength: diff.length,
       wasTruncated: diff.length !== truncatedDiff.length,
       previousBugCount: previousBugs?.length ?? 0,
       fileContextCount: truncatedFileContents?.size ?? 0,
+      numPasses,
+      voteThreshold,
     });
 
-    const claudeOutput = await this.runClaudeAnalysis(prompt);
-    const bugs = this.parseAnalysisOutput(claudeOutput, commitSha);
+    // Run parallel analysis passes with randomized diff ordering
+    const passResults = await this.runParallelAnalysisPasses(
+      truncatedDiff,
+      prTitle,
+      previousBugs,
+      truncatedFileContents,
+      numPasses
+    );
 
-    logger.info(`Analysis complete: ${bugs.length} bug(s) found.`, {
+    // Log pass results summary
+    const successfulPasses = passResults.filter((r) => !r.error);
+    const failedPasses = passResults.filter((r) => r.error);
+    logger.info(`Analysis passes completed: ${successfulPasses.length}/${numPasses} successful`, {
+      successfulPasses: successfulPasses.length,
+      failedPasses: failedPasses.length,
+      bugsPerPass: successfulPasses.map((r) => r.output.bugs.length),
+    });
+
+    if (successfulPasses.length === 0) {
+      // All passes failed - return empty result
+      return {
+        bugs: [],
+        overview: "All analysis passes failed.",
+        summary: "All analysis passes failed.",
+        riskLevel: "low",
+        commitSha,
+        analyzedAt: new Date().toISOString(),
+      };
+    }
+
+    // Apply majority voting to filter bugs
+    const votedBugs = this.applyMajorityVoting(passResults, voteThreshold);
+
+    // Combine overviews and summaries from successful passes
+    const combinedResult = this.combinePassResults(passResults, votedBugs, commitSha);
+
+    logger.info(`Analysis complete: ${votedBugs.length} bug(s) found after majority voting.`, {
       commitSha: commitSha.substring(0, 10),
-      riskLevel: claudeOutput.riskLevel,
+      riskLevel: combinedResult.riskLevel,
+      rawBugCount: successfulPasses.reduce((sum, r) => sum + r.output.bugs.length, 0),
+      votedBugCount: votedBugs.length,
     });
+
+    return combinedResult;
+  }
+
+  // ============================================================
+  // Run parallel analysis passes with randomized diff ordering
+  // ============================================================
+
+  private async runParallelAnalysisPasses(
+    diff: string,
+    prTitle: string,
+    previousBugs: BugRecord[] | undefined,
+    fileContents: Map<string, string> | undefined,
+    numPasses: number
+  ): Promise<AnalysisPassResult[]> {
+    // Create randomized diff variants for each pass
+    const diffVariants = this.createRandomizedDiffVariants(diff, numPasses);
+
+    // Run all passes in parallel
+    const passPromises = diffVariants.map((randomizedDiff, index) =>
+      this.runSingleAnalysisPass(
+        randomizedDiff,
+        prTitle,
+        previousBugs,
+        fileContents,
+        index
+      )
+    );
+
+    return Promise.all(passPromises);
+  }
+
+  // ============================================================
+  // Create randomized diff variants by shuffling file hunks
+  // ============================================================
+
+  private createRandomizedDiffVariants(diff: string, numVariants: number): string[] {
+    // Split diff into file-level hunks
+    const fileHunks = this.splitDiffIntoFileHunks(diff);
+    
+    if (fileHunks.length <= 1) {
+      // Only one file or empty diff - return same diff for all variants
+      return Array(numVariants).fill(diff);
+    }
+
+    const variants: string[] = [];
+    for (let i = 0; i < numVariants; i++) {
+      // Create a shuffled copy with a different seed each time
+      const shuffled = this.shuffleArrayWithSeed([...fileHunks], i);
+      variants.push(shuffled.join("\n"));
+    }
+
+    return variants;
+  }
+
+  // Split diff into file-level hunks
+  private splitDiffIntoFileHunks(diff: string): string[] {
+    const lines = diff.split("\n");
+    const hunks: string[] = [];
+    let currentHunk: string[] = [];
+
+    for (const line of lines) {
+      if (line.startsWith("diff --git") && currentHunk.length > 0) {
+        hunks.push(currentHunk.join("\n"));
+        currentHunk = [];
+      }
+      currentHunk.push(line);
+    }
+
+    if (currentHunk.length > 0) {
+      hunks.push(currentHunk.join("\n"));
+    }
+
+    return hunks;
+  }
+
+  // Fisher-Yates shuffle with seed for reproducibility
+  private shuffleArrayWithSeed<T>(array: T[], seed: number): T[] {
+    const result = [...array];
+    let m = result.length;
+    
+    // Simple seeded random number generator
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+
+    while (m > 1) {
+      const i = Math.floor(random() * m);
+      m--;
+      [result[m], result[i]] = [result[i], result[m]];
+    }
+
+    return result;
+  }
+
+  // ============================================================
+  // Run a single analysis pass
+  // ============================================================
+
+  private async runSingleAnalysisPass(
+    diff: string,
+    prTitle: string,
+    previousBugs: BugRecord[] | undefined,
+    fileContents: Map<string, string> | undefined,
+    passIndex: number
+  ): Promise<AnalysisPassResult> {
+    try {
+      const prompt = this.buildAnalysisPrompt(
+        diff,
+        prTitle,
+        previousBugs,
+        fileContents
+      );
+
+      const output = await this.runClaudeAnalysis(prompt);
+
+      logger.debug(`Pass ${passIndex} completed: ${output.bugs.length} bug(s) found`);
+
+      return { passIndex, output };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`Pass ${passIndex} failed: ${message}`);
+      return {
+        passIndex,
+        output: {
+          bugs: [],
+          overview: "Analysis pass failed.",
+          summary: "Analysis pass failed.",
+          riskLevel: "low",
+        },
+        error: error instanceof Error ? error : new Error(message),
+      };
+    }
+  }
+
+  // ============================================================
+  // Apply majority voting to filter bugs
+  // ============================================================
+
+  private applyMajorityVoting(
+    passResults: AnalysisPassResult[],
+    voteThreshold: number
+  ): Bug[] {
+    const successfulResults = passResults.filter((r) => !r.error);
+    
+    if (successfulResults.length === 0) {
+      return [];
+    }
+
+    // Collect all bugs from all passes and group similar ones
+    const bugVotes = new Map<string, BugWithVotes>();
+
+    for (const result of successfulResults) {
+      for (const bugData of result.output.bugs) {
+        const bug: Bug = {
+          id: randomUUID(),
+          title: bugData.title,
+          severity: bugData.severity,
+          description: bugData.description,
+          filePath: bugData.filePath,
+          startLine: bugData.startLine ?? null,
+          endLine: bugData.endLine ?? null,
+        };
+
+        // Create a key for similarity matching
+        const similarityKey = this.createBugSimilarityKey(bug);
+
+        if (bugVotes.has(similarityKey)) {
+          const existing = bugVotes.get(similarityKey)!;
+          existing.voteCount++;
+          existing.passIndices.push(result.passIndex);
+        } else {
+          bugVotes.set(similarityKey, {
+            bug,
+            voteCount: 1,
+            passIndices: [result.passIndex],
+          });
+        }
+      }
+    }
+
+    // Filter by vote threshold and return
+    const votedBugs: Bug[] = [];
+    for (const [, bugWithVotes] of bugVotes) {
+      if (bugWithVotes.voteCount >= voteThreshold) {
+        // Use the bug from the first pass that found it
+        votedBugs.push(bugWithVotes.bug);
+        logger.debug(`Bug "${bugWithVotes.bug.title}" passed voting: ${bugWithVotes.voteCount} votes from passes ${bugWithVotes.passIndices.join(", ")}`);
+      }
+    }
+
+    return votedBugs;
+  }
+
+  // ============================================================
+  // Create a similarity key for bug deduplication
+  // ============================================================
+
+  private createBugSimilarityKey(bug: Bug): string {
+    // Normalize the bug for comparison
+    const normalizedTitle = bug.title.toLowerCase().trim();
+    const normalizedFile = bug.filePath.toLowerCase().trim();
+    
+    // Include approximate line location (within 5 lines)
+    const lineBucket = bug.startLine ? Math.floor(bug.startLine / 5) : 0;
+    
+    // Create a key that groups similar bugs
+    return `${normalizedFile}:${lineBucket}:${normalizedTitle.substring(0, 50)}`;
+  }
+
+  // ============================================================
+  // Combine results from multiple passes
+  // ============================================================
+
+  private combinePassResults(
+    passResults: AnalysisPassResult[],
+    votedBugs: Bug[],
+    commitSha: string
+  ): AnalysisResult {
+    const successfulResults = passResults.filter((r) => !r.error);
+    
+    if (successfulResults.length === 0) {
+      return {
+        bugs: [],
+        overview: "All analysis passes failed.",
+        summary: "All analysis passes failed.",
+        riskLevel: "low",
+        commitSha,
+        analyzedAt: new Date().toISOString(),
+      };
+    }
+
+    // Use the first successful pass for overview and summary
+    // (they should be similar across passes)
+    const firstResult = successfulResults[0].output;
+
+    // Calculate overall risk level based on voted bugs
+    const riskLevel = this.calculateRiskLevel(votedBugs);
 
     return {
-      bugs,
-      overview: claudeOutput.overview,
-      summary: claudeOutput.summary,
-      riskLevel: claudeOutput.riskLevel,
+      bugs: votedBugs,
+      overview: firstResult.overview,
+      summary: this.buildSummaryFromVotedBugs(votedBugs, firstResult.summary),
+      riskLevel,
       commitSha,
       analyzedAt: new Date().toISOString(),
     };
+  }
+
+  // ============================================================
+  // Calculate overall risk level from voted bugs
+  // ============================================================
+
+  private calculateRiskLevel(bugs: Bug[]): "low" | "medium" | "high" {
+    if (bugs.length === 0) {
+      return "low";
+    }
+
+    const hasCritical = bugs.some((b) => b.severity === "critical");
+    const hasHigh = bugs.some((b) => b.severity === "high");
+    const criticalOrHighCount = bugs.filter(
+      (b) => b.severity === "critical" || b.severity === "high"
+    ).length;
+
+    if (hasCritical || criticalOrHighCount >= 2) {
+      return "high";
+    }
+    if (hasHigh || bugs.length >= 3) {
+      return "medium";
+    }
+    return "low";
+  }
+
+  // ============================================================
+  // Build summary from voted bugs
+  // ============================================================
+
+  private buildSummaryFromVotedBugs(bugs: Bug[], originalSummary: string): string {
+    if (bugs.length === 0) {
+      return "No bugs found after majority voting.";
+    }
+
+    const severityCounts = {
+      critical: bugs.filter((b) => b.severity === "critical").length,
+      high: bugs.filter((b) => b.severity === "high").length,
+      medium: bugs.filter((b) => b.severity === "medium").length,
+      low: bugs.filter((b) => b.severity === "low").length,
+    };
+
+    const parts: string[] = [];
+    if (severityCounts.critical > 0) {
+      parts.push(`${severityCounts.critical} critical`);
+    }
+    if (severityCounts.high > 0) {
+      parts.push(`${severityCounts.high} high`);
+    }
+    if (severityCounts.medium > 0) {
+      parts.push(`${severityCounts.medium} medium`);
+    }
+    if (severityCounts.low > 0) {
+      parts.push(`${severityCounts.low} low`);
+    }
+
+    return `Found ${bugs.length} bug(s) after majority voting: ${parts.join(", ")} severity.`;
   }
 
   // ============================================================
@@ -410,25 +757,6 @@ export class Analyzer {
       output.riskLevel = "low";
     }
     return output;
-  }
-
-  // ============================================================
-  // Convert claude output to Bug models
-  // ============================================================
-
-  private parseAnalysisOutput(
-    output: ClaudeAnalysisOutput,
-    commitSha: string
-  ): Bug[] {
-    return output.bugs.map((bug) => ({
-      id: randomUUID(),
-      title: bug.title,
-      severity: bug.severity,
-      description: bug.description,
-      filePath: bug.filePath,
-      startLine: bug.startLine ?? null,
-      endLine: bug.endLine ?? null,
-    }));
   }
 
   // ============================================================
