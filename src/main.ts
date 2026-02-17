@@ -10,10 +10,12 @@ import { Analyzer } from "./analyzer.js";
 import { ApprovalHandler } from "./approvalHandler.js";
 import { Commenter } from "./commenter.js";
 import { loadConfig } from "./config.js";
+import { CustomRulesManager } from "./customRules.js";
 import { DynamicContextManager } from "./dynamicContext.js";
 import { FixGenerator } from "./fixGenerator.js";
 import { GitHubClient } from "./githubClient.js";
 import { logger, setLogLevel } from "./logger.js";
+import { MetricsManager } from "./metrics.js";
 import { PrMonitor } from "./prMonitor.js";
 import type { PrWithNewCommits } from "./prMonitor.js";
 import { StateStore } from "./state.js";
@@ -31,6 +33,8 @@ class BugHunterDaemon {
   private fixGenerator: FixGenerator;
   private approvalHandler!: ApprovalHandler;
   private validator: BugValidator;
+  private customRulesManager: CustomRulesManager;
+  private metricsManager: MetricsManager;
   private isShuttingDown = false;
 
   constructor(config: Config) {
@@ -40,6 +44,8 @@ class BugHunterDaemon {
     this.agenticAnalyzer = new AgenticAnalyzer(config);
     this.fixGenerator = new FixGenerator(config);
     this.validator = new BugValidator(config);
+    this.customRulesManager = new CustomRulesManager(config);
+    this.metricsManager = new MetricsManager(config);
   }
 
   // ============================================================
@@ -55,6 +61,18 @@ class BugHunterDaemon {
       botName: this.config.botName,
       autofixMode: this.config.autofixMode,
       claudeModel: this.config.claudeModel ?? "(default)",
+      analysisPasses: this.config.analysisPasses,
+      voteThreshold: this.config.voteThreshold,
+      enableValidator: this.config.enableValidator,
+      enableAgenticAnalysis: this.config.enableAgenticAnalysis,
+      enableDynamicContext: this.config.enableDynamicContext,
+    });
+
+    // Log custom rules
+    const rules = this.customRulesManager.getRules();
+    logger.info(`Loaded ${rules.length} custom rules`, {
+      ruleCount: rules.length,
+      ruleIds: rules.slice(0, 5).map((r) => r.id),
     });
 
     // Verify prerequisites
@@ -341,6 +359,30 @@ class BugHunterDaemon {
           originalCount: analysis.bugs.length,
           validatedCount: validatedBugs.length,
         });
+      }
+
+      // 2.6. Check against custom rules
+      const ruleBugs: Bug[] = [];
+      for (const [filePath, content] of fileContents) {
+        const bugsFromRules = this.customRulesManager.checkAgainstRules(
+          content,
+          filePath,
+          diff
+        );
+        ruleBugs.push(...bugsFromRules);
+      }
+      
+      if (ruleBugs.length > 0) {
+        logger.info(`Found ${ruleBugs.length} bug(s) from custom rules`, {
+          ruleBugCount: ruleBugs.length,
+        });
+        // Merge with validated bugs, avoiding duplicates
+        const existingKeys = new Set(validatedBugs.map((b) => this.createBugKey(b)));
+        for (const bug of ruleBugs) {
+          if (!existingKeys.has(this.createBugKey(bug))) {
+            validatedBugs.push(bug);
+          }
+        }
       }
 
       // Update analysis with validated bugs

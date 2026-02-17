@@ -74,6 +74,9 @@ export function loadConfig(): Config {
     500
   );
 
+  // Custom rules settings
+  const customRulesPath = process.env.BUGHUNTER_CUSTOM_RULES_PATH?.trim() || null;
+
   return {
     githubOrgs,
     githubRepos,
@@ -95,6 +98,7 @@ export function loadConfig(): Config {
     enableDynamicContext,
     dynamicContextMaxFiles,
     dynamicContextMaxLines,
+    customRulesPath,
   };
 }
 

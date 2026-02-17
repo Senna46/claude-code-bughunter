@@ -30,6 +30,22 @@ export interface Config {
   enableDynamicContext: boolean;
   dynamicContextMaxFiles: number;
   dynamicContextMaxLines: number;
+  // Custom rules settings
+  customRulesPath: string | null;
+}
+
+// ============================================================
+// Custom Rules
+// ============================================================
+
+export interface CustomRule {
+  id: string;
+  title: string;
+  description: string;
+  severity: BugSeverity;
+  pattern?: string;
+  filePattern?: string;
+  checkType: "always" | "never" | "must-contain" | "must-not-contain";
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
