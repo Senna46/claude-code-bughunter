@@ -23,6 +23,9 @@ export interface Config {
   voteThreshold: number;
   enableValidator: boolean;
   validatorModel: string | null;
+  // Agentic analysis settings
+  enableAgenticAnalysis: boolean;
+  agenticMaxTurns: number;
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";

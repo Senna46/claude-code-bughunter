@@ -56,6 +56,13 @@ export function loadConfig(): Config {
   const enableValidator = process.env.BUGHUNTER_ENABLE_VALIDATOR?.trim().toLowerCase() !== "false";
   const validatorModel = process.env.BUGHUNTER_VALIDATOR_MODEL?.trim() || null;
 
+  // Agentic analysis settings
+  const enableAgenticAnalysis = process.env.BUGHUNTER_ENABLE_AGENTIC?.trim().toLowerCase() === "true";
+  const agenticMaxTurns = parsePositiveInt(
+    process.env.BUGHUNTER_AGENTIC_MAX_TURNS,
+    10
+  );
+
   return {
     githubOrgs,
     githubRepos,
@@ -72,6 +79,8 @@ export function loadConfig(): Config {
     voteThreshold,
     enableValidator,
     validatorModel,
+    enableAgenticAnalysis,
+    agenticMaxTurns,
   };
 }
 

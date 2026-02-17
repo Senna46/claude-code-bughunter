@@ -5,6 +5,7 @@
 // Limitations: Single-threaded; processes PRs sequentially within
 //   each polling cycle. Graceful shutdown on SIGINT/SIGTERM.
 
+import { AgenticAnalyzer } from "./agenticAnalyzer.js";
 import { Analyzer } from "./analyzer.js";
 import { ApprovalHandler } from "./approvalHandler.js";
 import { Commenter } from "./commenter.js";
@@ -24,6 +25,7 @@ class BugHunterDaemon {
   private github!: GitHubClient;
   private prMonitor!: PrMonitor;
   private analyzer: Analyzer;
+  private agenticAnalyzer: AgenticAnalyzer;
   private commenter!: Commenter;
   private fixGenerator: FixGenerator;
   private approvalHandler!: ApprovalHandler;
@@ -34,6 +36,7 @@ class BugHunterDaemon {
     this.config = config;
     this.state = new StateStore(config.dbPath);
     this.analyzer = new Analyzer(config);
+    this.agenticAnalyzer = new AgenticAnalyzer(config);
     this.fixGenerator = new FixGenerator(config);
     this.validator = new BugValidator(config);
   }
@@ -261,13 +264,38 @@ class BugHunterDaemon {
       }
 
       // 2. Analyze diff for bugs (with previous findings and file context)
-      const analysis = await this.analyzer.analyzeDiff(
+      let analysis = await this.analyzer.analyzeDiff(
         diff,
         pr.title,
         latestCommitSha,
         previousBugs.length > 0 ? previousBugs : undefined,
         fileContents.size > 0 ? fileContents : undefined
       );
+
+      // 2.3. Run agentic analysis if enabled (for deeper investigation)
+      if (this.config.enableAgenticAnalysis) {
+        logger.info("Running agentic analysis for deeper investigation...");
+        try {
+          const agenticAnalysis = await this.agenticAnalyzer.analyzeDiff(
+            diff,
+            pr.title,
+            latestCommitSha,
+            this.config.workDir,
+            previousBugs.length > 0 ? previousBugs : undefined
+          );
+          
+          // Merge results from both analyses
+          const mergedBugs = this.mergeBugResults(analysis.bugs, agenticAnalysis.bugs);
+          logger.info(`Agentic analysis merged: ${analysis.bugs.length} + ${agenticAnalysis.bugs.length} -> ${mergedBugs.length} bugs`);
+          analysis = {
+            ...analysis,
+            bugs: mergedBugs,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.warn(`Agentic analysis failed, continuing with standard analysis: ${message}`);
+        }
+      }
 
       // 2.5. Validate bugs to reduce false positives
       let validatedBugs = analysis.bugs;
@@ -559,6 +587,32 @@ class BugHunterDaemon {
         }
       }, 1000);
     });
+  }
+
+  // ============================================================
+  // Merge bug results from multiple analysis methods
+  // ============================================================
+
+  private mergeBugResults(bugs1: Bug[], bugs2: Bug[]): Bug[] {
+    const merged: Bug[] = [...bugs1];
+    const seenKeys = new Set(bugs1.map((b) => this.createBugKey(b)));
+
+    for (const bug of bugs2) {
+      const key = this.createBugKey(bug);
+      if (!seenKeys.has(key)) {
+        merged.push(bug);
+        seenKeys.add(key);
+      }
+    }
+
+    return merged;
+  }
+
+  private createBugKey(bug: Bug): string {
+    const normalizedTitle = bug.title.toLowerCase().trim();
+    const normalizedFile = bug.filePath.toLowerCase().trim();
+    const lineBucket = bug.startLine ? Math.floor(bug.startLine / 5) : 0;
+    return `${normalizedFile}:${lineBucket}:${normalizedTitle.substring(0, 50)}`;
   }
 }
 
