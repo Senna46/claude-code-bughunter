@@ -8,6 +8,11 @@ Monitors open pull requests for new commits, analyzes diffs for potential bugs u
 
 - **Automatic PR monitoring**: Polls GitHub for open PRs across configured organizations/repositories
 - **Bug detection**: Analyzes PR diffs using `claude -p` for bugs, security issues, and code quality problems
+- **Parallel analysis with majority voting**: Runs multiple analysis passes and filters bugs via majority voting (inspired by Cursor Bugbot)
+- **Bug validation**: Second-pass validation to reduce false positives
+- **Agentic analysis mode**: Deep investigation using tools (Read, Grep, Glob) for suspicious patterns
+- **Dynamic context discovery**: Token-efficient on-demand context loading
+- **Custom rules support**: Project-specific bug detection rules via `BUGHUNTER.md`
 - **PR summary updates**: Automatically updates PR description with risk assessment and change overview
 - **Inline review comments**: Posts structured bug findings as PR review comments with severity levels
 - **Autofix generation**: Generates bug fixes using Claude Code, committed to dedicated branches
