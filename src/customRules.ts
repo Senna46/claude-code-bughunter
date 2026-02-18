@@ -204,17 +204,30 @@ export class CustomRulesManager {
   }
 
   // ============================================================
+  // Parse markdown content into custom rules (public, for per-PR use)
+  // ============================================================
+
+  parseMarkdown(content: string, source: string): CustomRule[] {
+    return this.parseRulesFromMarkdown(content, source);
+  }
+
+  // ============================================================
   // Check code against all rules
+  // repoRules: additional per-PR rules loaded from the target repo's BUGHUNTER.md
   // ============================================================
 
   checkAgainstRules(
     code: string,
     filePath: string,
-    diff: string
+    diff: string,
+    repoRules: CustomRule[] = []
   ): Bug[] {
     const bugs: Bug[] = [];
 
-    for (const rule of this.rules) {
+    // Per-repo rules take highest priority, followed by global rules
+    const allRules = [...repoRules, ...this.rules];
+
+    for (const rule of allRules) {
       // "never" means this rule should never report a bug — skip entirely
       if (rule.checkType === "never") {
         continue;

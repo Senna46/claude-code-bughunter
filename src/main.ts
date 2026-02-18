@@ -25,6 +25,7 @@ import {
   type Bug,
   type BugRecord,
   type Config,
+  type CustomRule,
   type PullRequest,
 } from "./types.js";
 import { BugValidator } from "./validator.js";
@@ -379,12 +380,45 @@ class BugHunterDaemon {
       }
 
       // 2.6. Check against custom rules
+      // Attempt to load per-repo rules from BUGHUNTER.md (or .bughunter/rules.md)
+      // in the target repository at the PR's head commit via the GitHub API.
+      // This replaces the broken startup-time process.cwd() lookup that always
+      // pointed at the BugHunter application directory instead of the analyzed repo.
+      const repoRulesCandidatePaths = ["BUGHUNTER.md", ".bughunter/rules.md"];
+      let repoSpecificRules: CustomRule[] = [];
+      for (const candidatePath of repoRulesCandidatePaths) {
+        try {
+          const repoRulesContent = await this.github.getFileContent(
+            pr.owner,
+            pr.repo,
+            candidatePath,
+            pr.headSha
+          );
+          if (repoRulesContent !== null) {
+            repoSpecificRules = this.customRulesManager.parseMarkdown(
+              repoRulesContent,
+              `${pr.owner}/${pr.repo}:${candidatePath}`
+            );
+            logger.info(
+              `Loaded ${repoSpecificRules.length} per-repo custom rule(s) from ${candidatePath} in ${pr.owner}/${pr.repo}.`
+            );
+            break;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.debug(
+            `Could not fetch ${candidatePath} from ${pr.owner}/${pr.repo}@${pr.headSha}: ${message}`
+          );
+        }
+      }
+
       const ruleBugs: Bug[] = [];
       for (const [filePath, content] of fileContents) {
         const bugsFromRules = this.customRulesManager.checkAgainstRules(
           content,
           filePath,
-          diff
+          diff,
+          repoSpecificRules
         );
         ruleBugs.push(...bugsFromRules);
       }
