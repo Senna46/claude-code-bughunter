@@ -215,6 +215,11 @@ export class CustomRulesManager {
     const bugs: Bug[] = [];
 
     for (const rule of this.rules) {
+      // "never" means this rule should never report a bug — skip entirely
+      if (rule.checkType === "never") {
+        continue;
+      }
+
       // Check file pattern if specified
       if (rule.filePattern) {
         const fileRegex = new RegExp(rule.filePattern, "i");
@@ -223,14 +228,52 @@ export class CustomRulesManager {
         }
       }
 
-      // Check pattern if specified
+      if (rule.checkType === "always") {
+        // Report a bug unconditionally for any file that matches filePattern (or all files if no filePattern)
+        bugs.push({
+          id: `rule-${rule.id}-always`,
+          title: rule.title,
+          severity: rule.severity,
+          description: rule.description,
+          filePath,
+          startLine: 1,
+          endLine: 1,
+        });
+        continue;
+      }
+
+      if (rule.checkType === "must-contain") {
+        // The file must contain the pattern somewhere — report a bug if it does NOT match
+        if (!rule.pattern) {
+          continue;
+        }
+        try {
+          const regex = new RegExp(rule.pattern, "gi");
+          const hasMatch = regex.test(code);
+          if (!hasMatch) {
+            bugs.push({
+              id: `rule-${rule.id}-missing`,
+              title: rule.title,
+              severity: rule.severity,
+              description: `${rule.description}\n\nRequired pattern not found: ${rule.pattern}`,
+              filePath,
+              startLine: 1,
+              endLine: 1,
+            });
+          }
+        } catch (error) {
+          logger.debug(`Invalid regex pattern in rule ${rule.id}: ${rule.pattern}`);
+        }
+        continue;
+      }
+
+      // Default: "must-not-contain" — report a bug for each match found in new code
       if (rule.pattern) {
         try {
           const regex = new RegExp(rule.pattern, "gi");
           const matches = code.matchAll(regex);
 
           for (const match of matches) {
-            // Check if this line is in the diff (new code)
             const lineNumber = this.getLineNumber(code, match.index || 0);
             if (this.isNewCodeLine(diff, filePath, lineNumber)) {
               bugs.push({
