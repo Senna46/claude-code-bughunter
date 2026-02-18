@@ -74,7 +74,6 @@ export class DynamicContextManager {
       if (content) {
         const processed = this.processFileContent(content, filePath);
         context.set(filePath, processed);
-        this.cachedFiles.set(filePath, content);
       }
     }
 
@@ -91,6 +90,11 @@ export class DynamicContextManager {
   // ============================================================
 
   private async fetchFile(filePath: string): Promise<string | null> {
+    if (this.cachedFiles.has(filePath)) {
+      logger.debug(`Cache hit for file: ${filePath}`);
+      return this.cachedFiles.get(filePath)!;
+    }
+
     try {
       const content = await this.fileContentProvider(
         this.owner,
@@ -98,6 +102,11 @@ export class DynamicContextManager {
         filePath,
         this.ref
       );
+
+      if (content !== null) {
+        this.cachedFiles.set(filePath, content);
+      }
+
       return content;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
