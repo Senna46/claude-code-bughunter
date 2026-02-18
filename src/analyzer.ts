@@ -108,6 +108,23 @@ interface BugWithVotes {
   passIndices: number[];
 }
 
+// Parses a unified diff and returns unique file paths that were modified.
+// Matches lines starting with "+++ b/" (the new-file header in unified diff format).
+// Lines referencing /dev/null (deleted files) are excluded naturally since git
+// uses "+++ /dev/null" for them, not "+++ b/".
+export function extractChangedFilePaths(diff: string): string[] {
+  const filePaths: string[] = [];
+
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++ b/")) {
+      filePaths.push(line.substring(6));
+    }
+  }
+
+  // Deduplicate while preserving order
+  return [...new Set(filePaths)];
+}
+
 export class Analyzer {
   private config: Config;
 
@@ -655,18 +672,7 @@ export class Analyzer {
   // ============================================================
 
   extractChangedFilePaths(diff: string): string[] {
-    const filePaths: string[] = [];
-
-    for (const line of diff.split("\n")) {
-      // Match diff file header: +++ b/path/to/file
-      // Skip /dev/null which represents deleted files
-      if (line.startsWith("+++ b/")) {
-        filePaths.push(line.substring(6));
-      }
-    }
-
-    // Deduplicate while preserving order
-    return [...new Set(filePaths)];
+    return extractChangedFilePaths(diff);
   }
 
   // ============================================================

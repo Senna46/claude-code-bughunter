@@ -4,6 +4,7 @@
 // Limitations: May require multiple API calls; context quality depends on
 //   the agent's ability to request relevant files.
 
+import { extractChangedFilePaths } from "./analyzer.js";
 import { logger } from "./logger.js";
 import type { Config } from "./types.js";
 
@@ -81,7 +82,7 @@ export class DynamicContextManager {
     const context = new Map<string, string>();
 
     // 1. Extract changed files from diff
-    const changedFiles = this.extractChangedFilesFromDiff(diff);
+    const changedFiles = extractChangedFilePaths(diff);
 
     // 2. Prioritize files based on suspicious patterns
     const prioritizedFiles = this.prioritizeFiles(changedFiles, suspiciousPatterns);
@@ -212,22 +213,6 @@ export class DynamicContextManager {
       logger.debug(`Failed to fetch file ${filePath}: ${message}`);
       return null;
     }
-  }
-
-  private extractChangedFilesFromDiff(diff: string): string[] {
-    const files: string[] = [];
-    const lines = diff.split("\n");
-
-    for (const line of lines) {
-      if (line.startsWith("+++ b/")) {
-        const filePath = line.substring(6);
-        if (!files.includes(filePath)) {
-          files.push(filePath);
-        }
-      }
-    }
-
-    return files;
   }
 
   private prioritizeFiles(
