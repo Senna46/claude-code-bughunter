@@ -422,21 +422,40 @@ class BugHunterDaemon {
         // null-line duplicates are caught without false-aliasing different
         // line-based bugs.
         const existingKeys = new Set<string>();
+        // Track null-sentinel keys that originated from null-line bugs so that
+        // the fallback check below does not alias two different line-based bugs.
+        const nullOriginExistingKeys = new Set<string>();
         for (const b of validatedBugs) {
           for (const key of createBugSimilarityKeys(b)) {
             existingKeys.add(key);
           }
           existingKeys.add(createNullSentinelKey(b));
+          if (b.startLine === null) {
+            nullOriginExistingKeys.add(createNullSentinelKey(b));
+          }
         }
         for (const bug of ruleBugs) {
           const candidateKeys = createBugSimilarityKeys(bug);
-          const alreadySeen = candidateKeys.some((k) => existingKeys.has(k));
+          let alreadySeen = candidateKeys.some((k) => existingKeys.has(k));
+
+          // Fallback: if no line-bucket key matched and this bug has a startLine,
+          // check whether validatedBugs contains the same bug without a line number.
+          // Only alias to null-origin keys to avoid merging two different line-based
+          // bugs that happen to share the same file and title prefix.
+          if (!alreadySeen && bug.startLine !== null) {
+            const nullKey = createNullSentinelKey(bug);
+            alreadySeen = nullOriginExistingKeys.has(nullKey);
+          }
+
           if (!alreadySeen) {
             validatedBugs.push(bug);
             for (const key of candidateKeys) {
               existingKeys.add(key);
             }
             existingKeys.add(createNullSentinelKey(bug));
+            if (bug.startLine === null) {
+              nullOriginExistingKeys.add(createNullSentinelKey(bug));
+            }
           }
         }
       }
@@ -738,22 +757,43 @@ class BugHunterDaemon {
     // bugs2 are correctly caught without re-introducing false aliasing
     // between different line-based bugs.
     const seenKeys = new Set<string>();
+    // Track null-sentinel keys that originated from null-line bugs specifically.
+    // This mirrors the applyMajorityVoting fallback: we only alias a line-based
+    // bug in bugs2 to a null-sentinel key when the existing entry was a null-line
+    // bug, preventing two genuinely different line-based bugs from being aliased.
+    const nullOriginKeys = new Set<string>();
     for (const b of bugs1) {
       for (const key of createBugSimilarityKeys(b)) {
         seenKeys.add(key);
       }
       seenKeys.add(createNullSentinelKey(b));
+      if (b.startLine === null) {
+        nullOriginKeys.add(createNullSentinelKey(b));
+      }
     }
 
     for (const bug of bugs2) {
       const candidateKeys = createBugSimilarityKeys(bug);
-      const alreadySeen = candidateKeys.some((k) => seenKeys.has(k));
+      let alreadySeen = candidateKeys.some((k) => seenKeys.has(k));
+
+      // Fallback: if no line-bucket key matched and this bug has a startLine,
+      // check whether bugs1 contains the same bug reported without a line number.
+      // Only alias to null-origin keys to avoid merging two different line-based
+      // bugs that happen to share the same file and title prefix.
+      if (!alreadySeen && bug.startLine !== null) {
+        const nullKey = createNullSentinelKey(bug);
+        alreadySeen = nullOriginKeys.has(nullKey);
+      }
+
       if (!alreadySeen) {
         merged.push(bug);
         for (const key of candidateKeys) {
           seenKeys.add(key);
         }
         seenKeys.add(createNullSentinelKey(bug));
+        if (bug.startLine === null) {
+          nullOriginKeys.add(createNullSentinelKey(bug));
+        }
       }
     }
 
