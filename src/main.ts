@@ -12,6 +12,8 @@ import { Analyzer } from "./analyzer.js";
 import { ApprovalHandler } from "./approvalHandler.js";
 import { Commenter } from "./commenter.js";
 import { loadConfig } from "./config.js";
+import { CustomRulesManager } from "./customRules.js";
+import { DynamicContextManager } from "./dynamicContext.js";
 import { FixGenerator } from "./fixGenerator.js";
 import { GitHubClient } from "./githubClient.js";
 import { logger, setLogLevel } from "./logger.js";
@@ -23,6 +25,7 @@ import {
   type Bug,
   type BugRecord,
   type Config,
+  type CustomRule,
   type PullRequest,
 } from "./types.js";
 import { BugValidator } from "./validator.js";
@@ -38,6 +41,7 @@ class BugHunterDaemon {
   private fixGenerator: FixGenerator;
   private approvalHandler!: ApprovalHandler;
   private validator: BugValidator;
+  private customRulesManager: CustomRulesManager;
   private isShuttingDown = false;
 
   constructor(config: Config) {
@@ -47,6 +51,7 @@ class BugHunterDaemon {
     this.agenticAnalyzer = new AgenticAnalyzer(config);
     this.fixGenerator = new FixGenerator(config);
     this.validator = new BugValidator(config);
+    this.customRulesManager = new CustomRulesManager(config);
   }
 
   // ============================================================
@@ -62,6 +67,18 @@ class BugHunterDaemon {
       botName: this.config.botName,
       autofixMode: this.config.autofixMode,
       claudeModel: this.config.claudeModel ?? "(default)",
+      analysisPasses: this.config.analysisPasses,
+      voteThreshold: this.config.voteThreshold,
+      enableValidator: this.config.enableValidator,
+      enableAgenticAnalysis: this.config.enableAgenticAnalysis,
+      enableDynamicContext: this.config.enableDynamicContext,
+    });
+
+    // Log custom rules
+    const rules = this.customRulesManager.getRules();
+    logger.info(`Loaded ${rules.length} custom rules`, {
+      ruleCount: rules.length,
+      ruleIds: rules.slice(0, 5).map((r) => r.id),
     });
 
     // Verify prerequisites
@@ -250,29 +267,61 @@ class BugHunterDaemon {
         );
       }
 
-      // Fetch full source of changed files for richer analysis context
-      // Parallelize independent HTTP requests to reduce total latency
-      const changedFilePaths = this.analyzer.extractChangedFilePaths(diff);
-      const fileContents = new Map<string, string>();
-      const fileContentResults = await Promise.allSettled(
-        changedFilePaths.map((filePath) =>
-          this.github
-            .getFileContent(pr.owner, pr.repo, filePath, pr.headSha)
-            .then((content) => ({ filePath, content }))
-        )
-      );
-      for (const result of fileContentResults) {
-        if (result.status === "fulfilled" && result.value.content !== null) {
-          fileContents.set(result.value.filePath, result.value.content);
-        } else if (result.status === "rejected") {
-          logger.warn(`Failed to fetch file content: ${result.reason}`);
-        }
-      }
-      if (fileContents.size > 0) {
-        logger.info(
-          `Fetched ${fileContents.size} file(s) as analysis context.`,
-          { filePaths: [...fileContents.keys()] }
+      // 1.6. Dynamic context discovery (or fall back to pre-fetching)
+      let fileContents: Map<string, string>;
+
+      if (this.config.enableDynamicContext) {
+        // Use dynamic context discovery for token-efficient context loading
+        const contextManager = new DynamicContextManager(
+          this.config,
+          pr.owner,
+          pr.repo,
+          pr.headSha,
+          async (owner, repo, filePath, ref) => {
+            return this.github.getFileContent(owner, repo, filePath, ref);
+          }
         );
+
+        // Extract suspicious patterns from diff for prioritization
+        const suspiciousPatterns = DynamicContextManager.extractSuspiciousPatterns(diff);
+
+        // Get context on-demand
+        fileContents = await contextManager.getContextForDiff(diff, suspiciousPatterns);
+
+        if (fileContents.size > 0) {
+          logger.info(
+            `Dynamic context discovery loaded ${fileContents.size} file(s).`,
+            {
+              filePaths: [...fileContents.keys()],
+              suspiciousPatterns: suspiciousPatterns.slice(0, 5),
+            }
+          );
+        }
+      } else {
+        // Fall back to pre-fetching all changed files
+        // Parallelize independent HTTP requests to reduce total latency
+        const changedFilePaths = this.analyzer.extractChangedFilePaths(diff);
+        fileContents = new Map<string, string>();
+        const fileContentResults = await Promise.allSettled(
+          changedFilePaths.map((filePath) =>
+            this.github
+              .getFileContent(pr.owner, pr.repo, filePath, pr.headSha)
+              .then((content) => ({ filePath, content }))
+          )
+        );
+        for (const result of fileContentResults) {
+          if (result.status === "fulfilled" && result.value.content !== null) {
+            fileContents.set(result.value.filePath, result.value.content);
+          } else if (result.status === "rejected") {
+            logger.warn(`Failed to fetch file content: ${result.reason}`);
+          }
+        }
+        if (fileContents.size > 0) {
+          logger.info(
+            `Pre-fetched ${fileContents.size} file(s) as analysis context.`,
+            { filePaths: [...fileContents.keys()] }
+          );
+        }
       }
 
       // 2. Analyze diff for bugs (with previous findings and file context)
@@ -328,6 +377,73 @@ class BugHunterDaemon {
           originalCount: analysis.bugs.length,
           validatedCount: validatedBugs.length,
         });
+      }
+
+      // 2.6. Check against custom rules
+      // Attempt to load per-repo rules from BUGHUNTER.md (or .bughunter/rules.md)
+      // in the target repository at the PR's head commit via the GitHub API.
+      // This replaces the broken startup-time process.cwd() lookup that always
+      // pointed at the BugHunter application directory instead of the analyzed repo.
+      const repoRulesCandidatePaths = ["BUGHUNTER.md", ".bughunter/rules.md"];
+      let repoSpecificRules: CustomRule[] = [];
+      for (const candidatePath of repoRulesCandidatePaths) {
+        try {
+          const repoRulesContent = await this.github.getFileContent(
+            pr.owner,
+            pr.repo,
+            candidatePath,
+            pr.headSha
+          );
+          if (repoRulesContent !== null) {
+            repoSpecificRules = this.customRulesManager.parseMarkdown(
+              repoRulesContent,
+              `${pr.owner}/${pr.repo}:${candidatePath}`
+            );
+            logger.info(
+              `Loaded ${repoSpecificRules.length} per-repo custom rule(s) from ${candidatePath} in ${pr.owner}/${pr.repo}.`
+            );
+            break;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.debug(
+            `Could not fetch ${candidatePath} from ${pr.owner}/${pr.repo}@${pr.headSha}: ${message}`
+          );
+        }
+      }
+
+      const ruleBugs: Bug[] = [];
+      for (const [filePath, content] of fileContents) {
+        const bugsFromRules = this.customRulesManager.checkAgainstRules(
+          content,
+          filePath,
+          diff,
+          repoSpecificRules
+        );
+        ruleBugs.push(...bugsFromRules);
+      }
+
+      if (ruleBugs.length > 0) {
+        logger.info(`Found ${ruleBugs.length} bug(s) from custom rules`, {
+          ruleBugCount: ruleBugs.length,
+        });
+        // Merge with validated bugs, avoiding duplicates
+        const existingKeys = new Set<string>();
+        for (const b of validatedBugs) {
+          for (const key of createBugSimilarityKeys(b)) {
+            existingKeys.add(key);
+          }
+        }
+        for (const bug of ruleBugs) {
+          const candidateKeys = createBugSimilarityKeys(bug);
+          const alreadySeen = candidateKeys.some((k) => existingKeys.has(k));
+          if (!alreadySeen) {
+            validatedBugs.push(bug);
+            for (const key of candidateKeys) {
+              existingKeys.add(key);
+            }
+          }
+        }
       }
 
       // Update analysis with validated bugs, recomputing summary/riskLevel

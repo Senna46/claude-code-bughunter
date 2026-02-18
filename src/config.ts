@@ -71,6 +71,20 @@ export function loadConfig(): Config {
     10
   );
 
+  // Dynamic context discovery settings
+  const enableDynamicContext = process.env.BUGHUNTER_ENABLE_DYNAMIC_CONTEXT?.trim().toLowerCase() !== "false";
+  const dynamicContextMaxFiles = parsePositiveInt(
+    process.env.BUGHUNTER_DYNAMIC_CONTEXT_MAX_FILES,
+    10
+  );
+  const dynamicContextMaxLines = parsePositiveInt(
+    process.env.BUGHUNTER_DYNAMIC_CONTEXT_MAX_LINES,
+    500
+  );
+
+  // Custom rules settings
+  const customRulesPath = process.env.BUGHUNTER_CUSTOM_RULES_PATH?.trim() || null;
+
   return {
     githubOrgs,
     githubRepos,
@@ -89,6 +103,10 @@ export function loadConfig(): Config {
     validatorModel,
     enableAgenticAnalysis,
     agenticMaxTurns,
+    enableDynamicContext,
+    dynamicContextMaxFiles,
+    dynamicContextMaxLines,
+    customRulesPath,
   };
 }
 
