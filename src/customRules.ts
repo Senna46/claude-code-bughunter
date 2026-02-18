@@ -16,7 +16,7 @@ const DEFAULT_RULES: CustomRule[] = [
     description:
       "String concatenation or template literals in SQL queries may lead to SQL injection vulnerabilities. Use parameterized queries instead.",
     severity: "critical",
-    pattern: "(SELECT|INSERT|UPDATE|DELETE).*\\+|`.*\\$\\{.*\\}.*`",
+    pattern: "(SELECT|INSERT|UPDATE|DELETE).*(\\+|`.*\\$\\{.*\\}.*`)",
     checkType: "must-not-contain",
   },
   {
@@ -200,7 +200,7 @@ export class CustomRulesManager {
       // Check for file header
       if (line.startsWith("diff --git")) {
         inTargetFile =
-          line.includes(` b/${filePath}`) || line.includes(` ${filePath}`);
+          line.endsWith(` b/${filePath}`) || line.endsWith(` ${filePath}`);
         continue;
       }
 
