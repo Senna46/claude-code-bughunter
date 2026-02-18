@@ -6,7 +6,7 @@
 
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
-import { mkdtemp, writeFile, rm, mkdir } from "fs/promises";
+import { mkdtemp, writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -168,27 +168,6 @@ export class AgenticAnalyzer {
     // Write the diff to a file
     await writeFile(join(workDir, "diff.patch"), diff);
 
-    // Write analysis instructions
-    const instructions = `# PR Analysis Task
-
-## PR Title
-${prTitle}
-
-## Task
-Analyze the diff.patch file in this directory for bugs, security issues, and code quality problems.
-
-Use the Read tool to examine the diff, then investigate any suspicious patterns by:
-1. Reading related source files (if available in the context directory)
-2. Searching for how functions are used
-3. Checking type definitions and interfaces
-
-Report your findings as structured JSON when done.
-`;
-    await writeFile(join(workDir, "instructions.md"), instructions);
-
-    // Create a context directory for potential source files
-    await mkdir(join(workDir, "context"));
-
     return workDir;
   }
 
@@ -202,7 +181,8 @@ Report your findings as structured JSON when done.
     repoPath: string,
     previousBugs?: BugRecord[]
   ): Promise<AnalysisResult> {
-    const prompt = this.buildAgenticPrompt(prTitle, repoPath, previousBugs);
+    const diffPath = join(workDir, "diff.patch");
+    const prompt = this.buildAgenticPrompt(prTitle, repoPath, diffPath, previousBugs);
 
     const args = [
       "-p",
@@ -226,10 +206,12 @@ Report your findings as structured JSON when done.
     args.push("--max-turns", String(this.config.agenticMaxTurns));
 
     return new Promise<AnalysisResult>((resolve, reject) => {
+      // Run claude with cwd set to the actual repository so the agent's
+      // Read/Grep/Glob/Bash tools can explore the real source files.
       const child = spawn("claude", args, {
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 10 * 60 * 1000, // 10 minutes for agentic analysis
-        cwd: workDir, // Run in the workspace directory
+        cwd: repoPath,
       });
 
       let stdout = "";
@@ -283,16 +265,20 @@ Report your findings as structured JSON when done.
   private buildAgenticPrompt(
     prTitle: string,
     repoPath: string,
+    diffPath: string,
     previousBugs?: BugRecord[]
   ): string {
     const sections: string[] = [];
 
     sections.push(`Analyze this PR for bugs using an investigative approach.`);
     sections.push(`PR Title: ${prTitle}`);
-    
-    if (repoPath) {
-      sections.push(`Repository context path: ${repoPath}`);
-    }
+    sections.push(
+      `Repository root: ${repoPath}\n` +
+      `The diff is at: ${diffPath}\n\n` +
+      `Your working directory is the repository root. You can use Read, Grep, Glob, and Bash ` +
+      `to explore the full source tree directly. Start by reading the diff file at the path ` +
+      `shown above, then investigate any suspicious patterns using the repository source files.`
+    );
 
     // Include previously reported bugs
     if (previousBugs && previousBugs.length > 0) {
@@ -305,7 +291,6 @@ Report your findings as structured JSON when done.
     }
 
     sections.push(`
-Start by reading the diff.patch file, then investigate any suspicious patterns you find.
 Use tools liberally to verify your hypotheses.
 
 When done, output your findings as JSON with the following structure:
