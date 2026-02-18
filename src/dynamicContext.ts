@@ -8,22 +8,6 @@ import { extractChangedFilePaths } from "./analyzer.js";
 import { logger } from "./logger.js";
 import type { Config } from "./types.js";
 
-// Interface for context request
-export interface ContextRequest {
-  filePath: string;
-  reason: string;
-  startLine?: number;
-  endLine?: number;
-}
-
-// Interface for context result
-export interface ContextResult {
-  filePath: string;
-  content: string;
-  truncated: boolean;
-  linesIncluded: { start: number; end: number };
-}
-
 // Interface for file content provider (injected dependency)
 export type FileContentProvider = (
   owner: string,
@@ -31,13 +15,6 @@ export type FileContentProvider = (
   filePath: string,
   ref: string
 ) => Promise<string | null>;
-
-// Interface for related file discovery
-export interface RelatedFile {
-  filePath: string;
-  relevanceScore: number;
-  reason: string;
-}
 
 export class DynamicContextManager {
   private config: Config;
@@ -110,92 +87,6 @@ export class DynamicContextManager {
   }
 
   // ============================================================
-  // Get additional context on demand
-  // ============================================================
-
-  async getAdditionalContext(requests: ContextRequest[]): Promise<ContextResult[]> {
-    const results: ContextResult[] = [];
-
-    for (const request of requests) {
-      // Check cache first
-      let content: string | undefined = this.cachedFiles.get(request.filePath);
-
-      if (!content) {
-        const fetched = await this.fetchFile(request.filePath);
-        if (fetched !== null) {
-          content = fetched;
-          this.cachedFiles.set(request.filePath, fetched);
-        }
-      }
-
-      if (content) {
-        const processed = this.extractRelevantLines(
-          content,
-          request.startLine,
-          request.endLine
-        );
-
-        results.push({
-          filePath: request.filePath,
-          content: processed.content,
-          truncated: processed.truncated,
-          linesIncluded: processed.linesIncluded,
-        });
-      }
-    }
-
-    return results;
-  }
-
-  // ============================================================
-  // Discover related files based on imports/usage
-  // ============================================================
-
-  async discoverRelatedFiles(
-    filePath: string,
-    content: string
-  ): Promise<RelatedFile[]> {
-    const related: RelatedFile[] = [];
-
-    // Extract imports from the file
-    const imports = await this.extractImports(content, filePath);
-
-    // Extract function/class references
-    const references = this.extractReferences(content);
-
-    // Score each potential related file
-    for (const imp of imports) {
-      related.push({
-        filePath: imp,
-        relevanceScore: 0.9,
-        reason: "Direct import",
-      });
-    }
-
-    for (const ref of references) {
-      // Try to resolve the reference to a file path
-      const resolvedPath = await this.resolveReference(ref, filePath);
-      if (resolvedPath) {
-        related.push({
-          filePath: resolvedPath,
-          relevanceScore: 0.7,
-          reason: "Referenced in code",
-        });
-      }
-    }
-
-    // Deduplicate and sort by relevance
-    const seen = new Set<string>();
-    return related
-      .filter((r) => {
-        if (seen.has(r.filePath)) return false;
-        seen.add(r.filePath);
-        return true;
-      })
-      .sort((a, b) => b.relevanceScore - a.relevanceScore);
-  }
-
-  // ============================================================
   // Private helper methods
   // ============================================================
 
@@ -259,147 +150,6 @@ export class DynamicContextManager {
     logger.debug(`Truncated ${filePath} from ${lines.length} to ${maxLines} lines`);
 
     return truncated + `\n\n[... ${lines.length - maxLines} more lines ...]`;
-  }
-
-  private extractRelevantLines(
-    content: string,
-    startLine?: number,
-    endLine?: number
-  ): { content: string; truncated: boolean; linesIncluded: { start: number; end: number } } {
-    const lines = content.split("\n");
-    const maxLines = this.config.dynamicContextMaxLines;
-
-    if (!startLine) {
-      // Return from beginning
-      const result = lines.slice(0, maxLines);
-      return {
-        content: result.join("\n"),
-        truncated: lines.length > maxLines,
-        linesIncluded: { start: 1, end: Math.min(maxLines, lines.length) },
-      };
-    }
-
-    // Add context around the target lines
-    const contextLines = 20;
-    const start = Math.max(0, startLine - contextLines - 1);
-    const end = endLine
-      ? Math.min(lines.length, endLine + contextLines)
-      : Math.min(lines.length, startLine + contextLines);
-
-    const result = lines.slice(start, end);
-
-    return {
-      content: result.join("\n"),
-      truncated: end < lines.length,
-      linesIncluded: { start: start + 1, end: end },
-    };
-  }
-
-  private async extractImports(content: string, currentFilePath: string): Promise<string[]> {
-    const imports: string[] = [];
-    const currentDir = currentFilePath.substring(0, currentFilePath.lastIndexOf("/"));
-
-    // Match ES6 imports
-    const importRegex = /import\s+.*?from\s+['"]([^'"]+)['"]/g;
-    let match;
-    while ((match = importRegex.exec(content)) !== null) {
-      const importPath = match[1];
-      const resolved = await this.resolveImportPath(importPath, currentDir);
-      if (resolved) {
-        imports.push(resolved);
-      }
-    }
-
-    // Match CommonJS requires
-    const requireRegex = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-    while ((match = requireRegex.exec(content)) !== null) {
-      const importPath = match[1];
-      const resolved = await this.resolveImportPath(importPath, currentDir);
-      if (resolved) {
-        imports.push(resolved);
-      }
-    }
-
-    return imports;
-  }
-
-  // Resolves a relative or absolute import specifier to the actual file path in the
-  // remote repository by probing each candidate extension via fileContentProvider.
-  // Node_modules imports (bare specifiers) are skipped and return null.
-  private async resolveImportPath(importPath: string, currentDir: string): Promise<string | null> {
-    // Skip node_modules imports
-    if (!importPath.startsWith(".") && !importPath.startsWith("/")) {
-      return null;
-    }
-
-    if (importPath.startsWith(".")) {
-      const base = `${currentDir}/${importPath}`;
-
-      // If the specifier already carries a known extension, return it as-is.
-      const knownExtensions = [".ts", ".tsx", ".js", ".jsx", ".json"];
-      if (knownExtensions.some((ext) => base.endsWith(ext))) {
-        return base;
-      }
-
-      // Probe each candidate extension via the remote file provider instead of
-      // the local filesystem, which is irrelevant in a GitHub-hosted context.
-      for (const ext of knownExtensions) {
-        const candidate = base + ext;
-        const content = await this.fetchFile(candidate);
-        if (content !== null) {
-          return candidate;
-        }
-      }
-
-      // No matching remote file found — skip rather than blindly guessing.
-      logger.debug(`resolveImportPath: could not resolve "${importPath}" in "${currentDir}" via remote provider`);
-      return null;
-    }
-
-    return importPath;
-  }
-
-  private extractReferences(content: string): string[] {
-    const references: string[] = [];
-
-    // Match class/function names that might be defined elsewhere
-    const identifierRegex = /\b([A-Z][a-zA-Z0-9]*)\b/g;
-    let match;
-    while ((match = identifierRegex.exec(content)) !== null) {
-      const identifier = match[1];
-      // Skip common keywords and built-ins
-      const skipList = ["String", "Number", "Boolean", "Object", "Array", "Promise", "Error", "Map", "Set", "Date", "JSON"];
-      if (!skipList.includes(identifier)) {
-        references.push(identifier);
-      }
-    }
-
-    return [...new Set(references)];
-  }
-
-  private async resolveReference(
-    reference: string,
-    currentFilePath: string
-  ): Promise<string | null> {
-    // Try to find a file that might define this reference
-    // This is a simplified implementation - a real one would search the codebase
-    const currentDir = currentFilePath.substring(0, currentFilePath.lastIndexOf("/"));
-    const possiblePaths = [
-      `${currentDir}/${reference}.ts`,
-      `${currentDir}/${reference}.tsx`,
-      `${currentDir}/${reference}.js`,
-      `${currentDir}/${reference.toLowerCase()}.ts`,
-      `${currentDir}/${reference.toLowerCase()}.tsx`,
-    ];
-
-    for (const path of possiblePaths) {
-      const content = await this.fetchFile(path);
-      if (content !== null) {
-        return path;
-      }
-    }
-
-    return null;
   }
 
   // ============================================================

@@ -417,47 +417,7 @@ class BugHunterDaemon {
         logger.info(`Found ${ruleBugs.length} bug(s) from built-in rules`, {
           ruleBugCount: ruleBugs.length,
         });
-        // Merge with validated bugs, avoiding duplicates.
-        // Register null-sentinel keys alongside line-bucket keys so that
-        // null-line duplicates are caught without false-aliasing different
-        // line-based bugs.
-        const existingKeys = new Set<string>();
-        // Track null-sentinel keys that originated from null-line bugs so that
-        // the fallback check below does not alias two different line-based bugs.
-        const nullOriginExistingKeys = new Set<string>();
-        for (const b of validatedBugs) {
-          for (const key of createBugSimilarityKeys(b)) {
-            existingKeys.add(key);
-          }
-          existingKeys.add(createNullSentinelKey(b));
-          if (b.startLine === null) {
-            nullOriginExistingKeys.add(createNullSentinelKey(b));
-          }
-        }
-        for (const bug of ruleBugs) {
-          const candidateKeys = createBugSimilarityKeys(bug);
-          let alreadySeen = candidateKeys.some((k) => existingKeys.has(k));
-
-          // Fallback: if no line-bucket key matched and this bug has a startLine,
-          // check whether validatedBugs contains the same bug without a line number.
-          // Only alias to null-origin keys to avoid merging two different line-based
-          // bugs that happen to share the same file and title prefix.
-          if (!alreadySeen && bug.startLine !== null) {
-            const nullKey = createNullSentinelKey(bug);
-            alreadySeen = nullOriginExistingKeys.has(nullKey);
-          }
-
-          if (!alreadySeen) {
-            validatedBugs.push(bug);
-            for (const key of candidateKeys) {
-              existingKeys.add(key);
-            }
-            existingKeys.add(createNullSentinelKey(bug));
-            if (bug.startLine === null) {
-              nullOriginExistingKeys.add(createNullSentinelKey(bug));
-            }
-          }
-        }
+        validatedBugs = this.mergeBugResults(validatedBugs, ruleBugs);
       }
 
       // Update analysis with validated bugs, recomputing summary/riskLevel
