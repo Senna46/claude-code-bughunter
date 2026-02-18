@@ -366,7 +366,9 @@ class BugHunterDaemon {
       }
 
       // 2.5. Validate bugs to reduce false positives
-      let validatedBugs = analysis.bugs;
+      // Spread to a new array so that later push() calls never mutate analysis.bugs,
+      // regardless of whether the validator is enabled.
+      let validatedBugs = [...analysis.bugs];
       if (this.config.enableValidator && analysis.bugs.length > 0) {
         logger.info(`Validating ${analysis.bugs.length} detected bug(s)...`);
         validatedBugs = await this.validator.validateBugs(
