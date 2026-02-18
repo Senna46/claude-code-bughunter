@@ -271,7 +271,7 @@ export class Analyzer {
     // Simple seeded random number generator
     const random = () => {
       seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      return seed / 0x7fffffff;
+      return seed / 0x80000000;
     };
 
     while (m > 1) {
@@ -357,8 +357,11 @@ export class Analyzer {
 
         if (bugVotes.has(similarityKey)) {
           const existing = bugVotes.get(similarityKey)!;
-          existing.voteCount++;
-          existing.passIndices.push(result.passIndex);
+          // Only count one vote per pass to ensure voteThreshold requires independent agreement
+          if (!existing.passIndices.includes(result.passIndex)) {
+            existing.voteCount++;
+            existing.passIndices.push(result.passIndex);
+          }
         } else {
           bugVotes.set(similarityKey, {
             bug,

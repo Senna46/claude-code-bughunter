@@ -53,7 +53,7 @@ export function loadConfig(): Config {
     process.env.BUGHUNTER_VOTE_THRESHOLD,
     2
   );
-  const enableValidator = process.env.BUGHUNTER_ENABLE_VALIDATOR?.trim().toLowerCase() !== "false";
+  const enableValidator = process.env.BUGHUNTER_ENABLE_VALIDATOR?.trim().toLowerCase() === "true";
   const validatorModel = process.env.BUGHUNTER_VALIDATOR_MODEL?.trim() || null;
 
   // Agentic analysis settings
