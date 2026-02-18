@@ -4,7 +4,6 @@
 // Limitations: May require multiple API calls; context quality depends on
 //   the agent's ability to request relevant files.
 
-import * as fs from "fs";
 import { logger } from "./logger.js";
 import type { Config } from "./types.js";
 
@@ -158,7 +157,7 @@ export class DynamicContextManager {
     const related: RelatedFile[] = [];
 
     // Extract imports from the file
-    const imports = this.extractImports(content, filePath);
+    const imports = await this.extractImports(content, filePath);
 
     // Extract function/class references
     const references = this.extractReferences(content);
@@ -311,7 +310,7 @@ export class DynamicContextManager {
     };
   }
 
-  private extractImports(content: string, currentFilePath: string): string[] {
+  private async extractImports(content: string, currentFilePath: string): Promise<string[]> {
     const imports: string[] = [];
     const currentDir = currentFilePath.substring(0, currentFilePath.lastIndexOf("/"));
 
@@ -320,7 +319,7 @@ export class DynamicContextManager {
     let match;
     while ((match = importRegex.exec(content)) !== null) {
       const importPath = match[1];
-      const resolved = this.resolveImportPath(importPath, currentDir);
+      const resolved = await this.resolveImportPath(importPath, currentDir);
       if (resolved) {
         imports.push(resolved);
       }
@@ -330,7 +329,7 @@ export class DynamicContextManager {
     const requireRegex = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
     while ((match = requireRegex.exec(content)) !== null) {
       const importPath = match[1];
-      const resolved = this.resolveImportPath(importPath, currentDir);
+      const resolved = await this.resolveImportPath(importPath, currentDir);
       if (resolved) {
         imports.push(resolved);
       }
@@ -339,30 +338,37 @@ export class DynamicContextManager {
     return imports;
   }
 
-  private resolveImportPath(importPath: string, currentDir: string): string | null {
+  // Resolves a relative or absolute import specifier to the actual file path in the
+  // remote repository by probing each candidate extension via fileContentProvider.
+  // Node_modules imports (bare specifiers) are skipped and return null.
+  private async resolveImportPath(importPath: string, currentDir: string): Promise<string | null> {
     // Skip node_modules imports
     if (!importPath.startsWith(".") && !importPath.startsWith("/")) {
       return null;
     }
 
-    // Resolve relative imports
     if (importPath.startsWith(".")) {
-      let resolved = `${currentDir}/${importPath}`;
-      
-      // Add extensions if not present
-      const extensions = [".ts", ".tsx", ".js", ".jsx", ".json"];
-      if (!extensions.some((ext) => resolved.endsWith(ext))) {
-        for (const ext of extensions) {
-          const withExt = resolved + ext;
-          if (fs.existsSync(withExt)) {
-            return withExt;
-          }
-        }
-        // Fall back to .ts if no file is found with any extension
-        return resolved + ".ts";
+      const base = `${currentDir}/${importPath}`;
+
+      // If the specifier already carries a known extension, return it as-is.
+      const knownExtensions = [".ts", ".tsx", ".js", ".jsx", ".json"];
+      if (knownExtensions.some((ext) => base.endsWith(ext))) {
+        return base;
       }
-      
-      return resolved;
+
+      // Probe each candidate extension via the remote file provider instead of
+      // the local filesystem, which is irrelevant in a GitHub-hosted context.
+      for (const ext of knownExtensions) {
+        const candidate = base + ext;
+        const content = await this.fetchFile(candidate);
+        if (content !== null) {
+          return candidate;
+        }
+      }
+
+      // No matching remote file found — skip rather than blindly guessing.
+      logger.debug(`resolveImportPath: could not resolve "${importPath}" in "${currentDir}" via remote provider`);
+      return null;
     }
 
     return importPath;
