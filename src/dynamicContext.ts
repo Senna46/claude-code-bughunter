@@ -193,13 +193,14 @@ export class DynamicContextManager {
     }
 
     // Look for file patterns that might indicate important code
-    if (diff.includes("test") || diff.includes("spec")) {
+    const diffLower = diff.toLowerCase();
+    if (diffLower.includes("test") || diffLower.includes("spec")) {
       patterns.push("test");
     }
-    if (diff.includes("auth") || diff.includes("security")) {
+    if (diffLower.includes("auth") || diffLower.includes("security")) {
       patterns.push("security");
     }
-    if (diff.includes("api") || diff.includes("handler")) {
+    if (diffLower.includes("api") || diffLower.includes("handler")) {
       patterns.push("api");
     }
 
