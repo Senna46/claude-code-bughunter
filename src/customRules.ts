@@ -222,7 +222,15 @@ export class CustomRulesManager {
 
       // Check file pattern if specified
       if (rule.filePattern) {
-        const fileRegex = new RegExp(rule.filePattern, "i");
+        let fileRegex: RegExp;
+        try {
+          fileRegex = new RegExp(rule.filePattern, "i");
+        } catch (error) {
+          logger.warn(
+            `Invalid filePattern regex in rule ${rule.id} ("${rule.filePattern}"): ${error instanceof Error ? error.message : String(error)} — skipping rule`
+          );
+          continue;
+        }
         if (!fileRegex.test(filePath)) {
           continue;
         }
