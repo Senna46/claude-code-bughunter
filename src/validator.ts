@@ -82,32 +82,38 @@ export class BugValidator {
 
     logger.info(`Validating ${bugs.length} bug(s) with validator model...`);
 
-    const validatedBugs: Bug[] = [];
+    // Validate all bugs in parallel — each validateSingleBug call is independent
+    const settledResults = await Promise.allSettled(
+      bugs.map((bug) => this.validateSingleBug(bug, diff, fileContents).then((result) => ({ bug, result })))
+    );
+
     const validationResults: Array<{ bug: Bug; result: ValidationResult }> = [];
+    const validatedBugs: Bug[] = [];
 
-    // Validate each bug
-    for (const bug of bugs) {
-      try {
-        const result = await this.validateSingleBug(bug, diff, fileContents);
-        validationResults.push({ bug, result });
-
-        if (result.isValid) {
-          // Apply severity correction if suggested
-          let finalBug = bug;
-          if (result.correctedSeverity && result.correctedSeverity !== bug.severity) {
-            logger.debug(`Severity corrected for bug "${bug.title}": ${bug.severity} -> ${result.correctedSeverity}`);
-            finalBug = { ...bug, severity: result.correctedSeverity };
-          }
-          validatedBugs.push(finalBug);
-          logger.debug(`Bug validated: "${bug.title}" (${result.confidence} confidence)`);
-        } else {
-          logger.debug(`Bug filtered out: "${bug.title}" - ${result.reasoning}`);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+    for (const settled of settledResults) {
+      if (settled.status === "rejected") {
+        const bug = bugs[settledResults.indexOf(settled)];
+        const message = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
         logger.warn(`Validation failed for bug "${bug.title}": ${message}. Keeping bug.`);
         // On validation failure, keep the bug to be conservative
         validatedBugs.push(bug);
+        continue;
+      }
+
+      const { bug, result } = settled.value;
+      validationResults.push({ bug, result });
+
+      if (result.isValid) {
+        // Apply severity correction if suggested
+        let finalBug = bug;
+        if (result.correctedSeverity && result.correctedSeverity !== bug.severity) {
+          logger.debug(`Severity corrected for bug "${bug.title}": ${bug.severity} -> ${result.correctedSeverity}`);
+          finalBug = { ...bug, severity: result.correctedSeverity };
+        }
+        validatedBugs.push(finalBug);
+        logger.debug(`Bug validated: "${bug.title}" (${result.confidence} confidence)`);
+      } else {
+        logger.debug(`Bug filtered out: "${bug.title}" - ${result.reasoning}`);
       }
     }
 
