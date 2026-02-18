@@ -22,6 +22,7 @@ import type { PrWithNewCommits } from "./prMonitor.js";
 import { StateStore } from "./state.js";
 import {
   createBugSimilarityKeys,
+  createNullSentinelKey,
   type Bug,
   type BugRecord,
   type Config,
@@ -427,12 +428,16 @@ class BugHunterDaemon {
         logger.info(`Found ${ruleBugs.length} bug(s) from custom rules`, {
           ruleBugCount: ruleBugs.length,
         });
-        // Merge with validated bugs, avoiding duplicates
+        // Merge with validated bugs, avoiding duplicates.
+        // Register null-sentinel keys alongside line-bucket keys so that
+        // null-line duplicates are caught without false-aliasing different
+        // line-based bugs.
         const existingKeys = new Set<string>();
         for (const b of validatedBugs) {
           for (const key of createBugSimilarityKeys(b)) {
             existingKeys.add(key);
           }
+          existingKeys.add(createNullSentinelKey(b));
         }
         for (const bug of ruleBugs) {
           const candidateKeys = createBugSimilarityKeys(bug);
@@ -442,6 +447,7 @@ class BugHunterDaemon {
             for (const key of candidateKeys) {
               existingKeys.add(key);
             }
+            existingKeys.add(createNullSentinelKey(bug));
           }
         }
       }
@@ -738,11 +744,15 @@ class BugHunterDaemon {
 
     // Seed seenKeys with all candidate keys (primary + shifted) from bugs1
     // so that boundary-adjacent duplicates in bugs2 are correctly detected.
+    // Also register null-sentinel keys so that null-line duplicates from
+    // bugs2 are correctly caught without re-introducing false aliasing
+    // between different line-based bugs.
     const seenKeys = new Set<string>();
     for (const b of bugs1) {
       for (const key of createBugSimilarityKeys(b)) {
         seenKeys.add(key);
       }
+      seenKeys.add(createNullSentinelKey(b));
     }
 
     for (const bug of bugs2) {
@@ -753,6 +763,7 @@ class BugHunterDaemon {
         for (const key of candidateKeys) {
           seenKeys.add(key);
         }
+        seenKeys.add(createNullSentinelKey(bug));
       }
     }
 

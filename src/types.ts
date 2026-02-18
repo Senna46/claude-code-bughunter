@@ -104,27 +104,27 @@ const LINE_BUCKET_SIZE = 5;
 const TITLE_SIMILARITY_LENGTH = 50;
 
 // Returns all candidate similarity keys for a Bug.
-// Three key types are used:
-//   1. Primary key      – based on Math.floor(line / bucketSize)
-//   2. Shifted key      – based on Math.floor((line + bucketSize/2) / bucketSize)
-//                         emitted only when it differs from the primary key, to handle
-//                         cases where two passes report the same bug at adjacent lines
-//                         that straddle a bucket boundary (e.g. lines 9 and 10).
-//   3. Null-sentinel key – "file:null:title", always included for bugs with a known
-//                         startLine so that a pass reporting the same bug without any
-//                         line information shares at least one key and the votes are
-//                         correctly merged during voting.
-// When startLine is null, only the null-sentinel key is returned.  Using a dedicated
-// sentinel (instead of mapping null to bucket 0) prevents false collisions with bugs
-// legitimately located in lines 1–4 (which also map to bucket 0).
+// Two key types are used:
+//   1. Primary key  – based on Math.floor(line / bucketSize)
+//   2. Shifted key  – based on Math.floor((line + bucketSize/2) / bucketSize)
+//                     emitted only when it differs from the primary key, to handle
+//                     cases where two passes report the same bug at adjacent lines
+//                     that straddle a bucket boundary (e.g. lines 9 and 10).
+// When startLine is null, only the null-sentinel key ("file:null:titlePrefix") is
+// returned.
+//
+// The null-sentinel key is NOT included for bugs with a known startLine.
+// Callers that need cross-matching between line-based and null-line bugs should
+// use createNullSentinelKey() and manage the alias/dedup logic themselves.
+// This prevents two genuinely different line-based bugs in the same file with
+// similar title prefixes from being incorrectly aliased together.
 export function createBugSimilarityKeys(bug: Bug): string[] {
   const normalizedTitle = bug.title.toLowerCase().trim();
   const normalizedFile = bug.filePath.toLowerCase().trim();
   const titlePrefix = normalizedTitle.substring(0, TITLE_SIMILARITY_LENGTH);
-  const nullSentinelKey = `${normalizedFile}:null:${titlePrefix}`;
 
   if (bug.startLine === null) {
-    return [nullSentinelKey];
+    return [`${normalizedFile}:null:${titlePrefix}`];
   }
 
   const primaryBucket = Math.floor(bug.startLine / LINE_BUCKET_SIZE);
@@ -135,10 +135,20 @@ export function createBugSimilarityKeys(bug: Bug): string[] {
 
   if (shiftedBucket !== primaryBucket) {
     const shiftedKey = `${normalizedFile}:${shiftedBucket}:${titlePrefix}`;
-    return [primaryKey, shiftedKey, nullSentinelKey];
+    return [primaryKey, shiftedKey];
   }
 
-  return [primaryKey, nullSentinelKey];
+  return [primaryKey];
+}
+
+// Returns the null-sentinel key for any bug regardless of its startLine.
+// Used by callers to explicitly register cross-matching aliases between
+// line-based and null-line reports of the same bug.
+export function createNullSentinelKey(bug: Bug): string {
+  const normalizedTitle = bug.title.toLowerCase().trim();
+  const normalizedFile = bug.filePath.toLowerCase().trim();
+  const titlePrefix = normalizedTitle.substring(0, TITLE_SIMILARITY_LENGTH);
+  return `${normalizedFile}:null:${titlePrefix}`;
 }
 
 export interface AnalysisResult {

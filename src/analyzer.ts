@@ -11,6 +11,7 @@ import { randomUUID } from "crypto";
 import { logger } from "./logger.js";
 import {
   createBugSimilarityKeys,
+  createNullSentinelKey,
   type AnalysisResult,
   type Bug,
   type BugRecord,
@@ -370,7 +371,10 @@ export class Analyzer {
           endLine: bugData.endLine ?? null,
         };
 
-        // Generate primary + optional shifted key to tolerate bucket-boundary splits
+        // Generate primary + optional shifted key to tolerate bucket-boundary splits.
+        // For line-based bugs this returns only line-bucket keys (no null sentinel)
+        // so that two different bugs in the same file with similar titles are never
+        // aliased together through the null sentinel.
         const candidateKeys = createBugSimilarityKeys(bug);
 
         // Find any existing canonical key via the alias map
@@ -383,12 +387,38 @@ export class Analyzer {
           }
         }
 
+        // Fallback for line-based bugs: if no match was found through line-bucket
+        // keys, check the null sentinel.  Merge only when the existing entry was
+        // created by a null-line bug so that two genuinely different line-based
+        // bugs are never aliased together.
+        if (canonicalKey === undefined && bug.startLine !== null) {
+          const nullKey = createNullSentinelKey(bug);
+          const nullAlias = keyAlias.get(nullKey);
+          if (nullAlias !== undefined) {
+            const existingEntry = bugVotes.get(nullAlias);
+            if (existingEntry && existingEntry.bug.startLine === null) {
+              canonicalKey = nullAlias;
+            }
+          }
+        }
+
         if (canonicalKey !== undefined) {
           const existing = bugVotes.get(canonicalKey)!;
           // Only count one vote per pass to ensure voteThreshold requires independent agreement
           if (!existing.passIndices.includes(result.passIndex)) {
             existing.voteCount++;
             existing.passIndices.push(result.passIndex);
+          }
+          // Prefer line-based bug details over null-line placeholder
+          if (existing.bug.startLine === null && bug.startLine !== null) {
+            existing.bug = bug;
+          }
+          // Register any new candidate keys as additional aliases so that
+          // later reports at nearby lines can still find this entry.
+          for (const key of candidateKeys) {
+            if (!keyAlias.has(key)) {
+              keyAlias.set(key, canonicalKey);
+            }
           }
         } else {
           // New entry: register the first candidate key as canonical
@@ -401,6 +431,16 @@ export class Analyzer {
           // Register all candidate keys as aliases pointing to the canonical key
           for (const key of candidateKeys) {
             keyAlias.set(key, canonicalKey);
+          }
+        }
+
+        // For line-based bugs, register the null-sentinel key as an alias
+        // (when not already taken) so that a later null-line report of the
+        // same bug can still be matched.
+        if (bug.startLine !== null) {
+          const nullKey = createNullSentinelKey(bug);
+          if (!keyAlias.has(nullKey)) {
+            keyAlias.set(nullKey, canonicalKey);
           }
         }
       }
