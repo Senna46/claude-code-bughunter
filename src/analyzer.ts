@@ -463,9 +463,9 @@ export class Analyzer {
   // so that these metadata fields stay consistent with bugs.length.
   // ============================================================
 
-  buildAnalysisMeta(bugs: Bug[]): { summary: string; riskLevel: RiskLevel } {
+  buildAnalysisMeta(bugs: Bug[], originalSummary = ""): { summary: string; riskLevel: RiskLevel } {
     return {
-      summary: this.buildSummaryFromVotedBugs(bugs, ""),
+      summary: this.buildSummaryFromVotedBugs(bugs, originalSummary),
       riskLevel: this.calculateRiskLevel(bugs),
     };
   }
