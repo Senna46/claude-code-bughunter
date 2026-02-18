@@ -4,6 +4,7 @@
 // Limitations: May require multiple API calls; context quality depends on
 //   the agent's ability to request relevant files.
 
+import * as fs from "fs";
 import { logger } from "./logger.js";
 import type { Config } from "./types.js";
 
@@ -353,9 +354,12 @@ export class DynamicContextManager {
       if (!extensions.some((ext) => resolved.endsWith(ext))) {
         for (const ext of extensions) {
           const withExt = resolved + ext;
-          // Return the first valid extension (actual validation would need file check)
-          return withExt;
+          if (fs.existsSync(withExt)) {
+            return withExt;
+          }
         }
+        // Fall back to .ts if no file is found with any extension
+        return resolved + ".ts";
       }
       
       return resolved;
