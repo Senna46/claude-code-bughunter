@@ -500,7 +500,11 @@ export class Analyzer {
 
   private buildSummaryFromVotedBugs(bugs: Bug[], originalSummary: string): string {
     if (bugs.length === 0) {
-      return "No bugs found after majority voting.";
+      // Prefer the original Claude summary when no bugs survived voting,
+      // as it may contain useful "no issues found" context.
+      return originalSummary.trim() !== ""
+        ? originalSummary
+        : "No bugs found after majority voting.";
     }
 
     const severityCounts = {
@@ -524,7 +528,14 @@ export class Analyzer {
       parts.push(`${severityCounts.low} low`);
     }
 
-    return `Found ${bugs.length} bug(s) after majority voting: ${parts.join(", ")} severity.`;
+    const votingSummary = `Found ${bugs.length} bug(s) after majority voting: ${parts.join(", ")} severity.`;
+
+    // Append the original Claude summary as additional context when available.
+    if (originalSummary.trim() !== "") {
+      return `${votingSummary} ${originalSummary}`;
+    }
+
+    return votingSummary;
   }
 
   // ============================================================
