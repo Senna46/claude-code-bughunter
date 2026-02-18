@@ -296,9 +296,12 @@ class BugHunterDaemon {
           // Merge results from both analyses
           const mergedBugs = this.mergeBugResults(analysis.bugs, agenticAnalysis.bugs);
           logger.info(`Agentic analysis merged: ${analysis.bugs.length} + ${agenticAnalysis.bugs.length} -> ${mergedBugs.length} bugs`);
+          const mergedMeta = this.analyzer.buildAnalysisMeta(mergedBugs);
           analysis = {
             ...analysis,
             bugs: mergedBugs,
+            summary: mergedMeta.summary,
+            riskLevel: mergedMeta.riskLevel,
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -321,10 +324,14 @@ class BugHunterDaemon {
         });
       }
 
-      // Update analysis with validated bugs
+      // Update analysis with validated bugs, recomputing summary/riskLevel
+      // so they reflect the final bug count rather than the pre-validation set.
+      const validatedMeta = this.analyzer.buildAnalysisMeta(validatedBugs);
       const validatedAnalysis = {
         ...analysis,
         bugs: validatedBugs,
+        summary: validatedMeta.summary,
+        riskLevel: validatedMeta.riskLevel,
       };
 
       // 3. Record all new commits as analyzed

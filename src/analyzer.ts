@@ -16,6 +16,7 @@ import {
   type BugRecord,
   type ClaudeAnalysisOutput,
   type Config,
+  type RiskLevel,
 } from "./types.js";
 
 // JSON schema for structured bug analysis output from claude -p
@@ -434,6 +435,19 @@ export class Analyzer {
       riskLevel,
       commitSha,
       analyzedAt: new Date().toISOString(),
+    };
+  }
+
+  // ============================================================
+  // Rebuild summary and riskLevel from a final bug list.
+  // Used after agentic merging or validation changes the bug set,
+  // so that these metadata fields stay consistent with bugs.length.
+  // ============================================================
+
+  buildAnalysisMeta(bugs: Bug[]): { summary: string; riskLevel: RiskLevel } {
+    return {
+      summary: this.buildSummaryFromVotedBugs(bugs, ""),
+      riskLevel: this.calculateRiskLevel(bugs),
     };
   }
 
