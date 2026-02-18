@@ -276,17 +276,33 @@ ${SUMMARY_MARKER_END}`;
       }
     } else {
       // All bugs are fallback — post a review with body only (no inline comments)
-      await this.github.createReview(
-        pr.owner,
-        pr.repo,
-        pr.number,
-        analysis.commitSha,
-        reviewBody,
-        []
-      );
-      logger.info(
-        `Posted review with ${fallbackBugs.length} bug(s) in review body (no inline-eligible bugs).`
-      );
+      try {
+        await this.github.createReview(
+          pr.owner,
+          pr.repo,
+          pr.number,
+          analysis.commitSha,
+          reviewBody,
+          []
+        );
+        logger.info(
+          `Posted review with ${fallbackBugs.length} bug(s) in review body (no inline-eligible bugs).`
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        logger.error(
+          "Failed to post body-only review. Falling back to issue comment.",
+          {
+            error: message,
+            bugCount: analysis.bugs.length,
+          }
+        );
+        await this.postBugsAsIssueComment(pr, analysis);
+        logger.info(
+          `Posted ${analysis.bugs.length} bug(s) as issue comment (review API failed).`
+        );
+      }
     }
   }
 
