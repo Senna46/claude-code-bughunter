@@ -141,7 +141,8 @@ export class Analyzer {
     prTitle: string,
     commitSha: string,
     previousBugs?: BugRecord[],
-    fileContents?: Map<string, string>
+    fileContents?: Map<string, string>,
+    customRulesText?: string
   ): Promise<AnalysisResult> {
     // Truncate diff if too large
     const truncatedDiff = this.truncateDiff(diff);
@@ -160,6 +161,7 @@ export class Analyzer {
       wasTruncated: diff.length !== truncatedDiff.length,
       previousBugCount: previousBugs?.length ?? 0,
       fileContextCount: truncatedFileContents?.size ?? 0,
+      hasCustomRules: Boolean(customRulesText),
       numPasses,
       voteThreshold,
     });
@@ -170,7 +172,8 @@ export class Analyzer {
       prTitle,
       previousBugs,
       truncatedFileContents,
-      numPasses
+      numPasses,
+      customRulesText
     );
 
     // Log pass results summary
@@ -220,7 +223,8 @@ export class Analyzer {
     prTitle: string,
     previousBugs: BugRecord[] | undefined,
     fileContents: Map<string, string> | undefined,
-    numPasses: number
+    numPasses: number,
+    customRulesText?: string
   ): Promise<AnalysisPassResult[]> {
     // Create randomized diff variants for each pass
     const diffVariants = this.createRandomizedDiffVariants(diff, numPasses);
@@ -232,7 +236,8 @@ export class Analyzer {
         prTitle,
         previousBugs,
         fileContents,
-        index
+        index,
+        customRulesText
       )
     );
 
@@ -312,14 +317,16 @@ export class Analyzer {
     prTitle: string,
     previousBugs: BugRecord[] | undefined,
     fileContents: Map<string, string> | undefined,
-    passIndex: number
+    passIndex: number,
+    customRulesText?: string
   ): Promise<AnalysisPassResult> {
     try {
       const prompt = this.buildAnalysisPrompt(
         diff,
         prTitle,
         previousBugs,
-        fileContents
+        fileContents,
+        customRulesText
       );
 
       const output = await this.runClaudeAnalysis(prompt);
@@ -609,7 +616,8 @@ export class Analyzer {
     diff: string,
     prTitle: string,
     previousBugs?: BugRecord[],
-    fileContents?: Map<string, string>
+    fileContents?: Map<string, string>,
+    customRulesText?: string
   ): string {
     const sections: string[] = [];
 
@@ -617,6 +625,11 @@ export class Analyzer {
       `Analyze the following pull request diff for bugs, security issues, and code quality problems.`
     );
     sections.push(`PR Title: ${prTitle}`);
+
+    // Include custom rules so Claude can reason about project-specific constraints
+    if (customRulesText) {
+      sections.push(customRulesText);
+    }
 
     // Include full source files for deeper context
     if (fileContents && fileContents.size > 0) {

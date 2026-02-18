@@ -325,13 +325,49 @@ class BugHunterDaemon {
         }
       }
 
-      // 2. Analyze diff for bugs (with previous findings and file context)
+      // 2. Load per-repo custom rules before analysis so Claude can reason about them.
+      // Fetch BUGHUNTER.md from the target repository at the PR's head commit via
+      // the GitHub API (the process.cwd() lookup at startup always pointed at the
+      // BugHunter application directory, not the analyzed repo).
+      const repoRulesCandidatePaths = ["BUGHUNTER.md", ".bughunter/rules.md"];
+      let repoSpecificRules: CustomRule[] = [];
+      for (const candidatePath of repoRulesCandidatePaths) {
+        try {
+          const repoRulesContent = await this.github.getFileContent(
+            pr.owner,
+            pr.repo,
+            candidatePath,
+            pr.headSha
+          );
+          if (repoRulesContent !== null) {
+            repoSpecificRules = this.customRulesManager.parseMarkdown(
+              repoRulesContent,
+              `${pr.owner}/${pr.repo}:${candidatePath}`
+            );
+            logger.info(
+              `Loaded ${repoSpecificRules.length} per-repo custom rule(s) from ${candidatePath} in ${pr.owner}/${pr.repo}.`
+            );
+            break;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.debug(
+            `Could not fetch ${candidatePath} from ${pr.owner}/${pr.repo}@${pr.headSha}: ${message}`
+          );
+        }
+      }
+
+      // Build the formatted rules string once; both analyzers share it.
+      const customRulesText = this.customRulesManager.formatRulesForPrompt(repoSpecificRules) || undefined;
+
+      // 2.1. Analyze diff for bugs (with previous findings, file context, and custom rules)
       let analysis = await this.analyzer.analyzeDiff(
         diff,
         pr.title,
         latestCommitSha,
         previousBugs.length > 0 ? previousBugs : undefined,
-        fileContents.size > 0 ? fileContents : undefined
+        fileContents.size > 0 ? fileContents : undefined,
+        customRulesText
       );
 
       // 2.3. Run agentic analysis if enabled (for deeper investigation)
@@ -344,7 +380,8 @@ class BugHunterDaemon {
             pr.title,
             latestCommitSha,
             repoPath,
-            previousBugs.length > 0 ? previousBugs : undefined
+            previousBugs.length > 0 ? previousBugs : undefined,
+            customRulesText
           );
           
           // Merge results from both analyses
@@ -382,39 +419,7 @@ class BugHunterDaemon {
         });
       }
 
-      // 2.6. Check against custom rules
-      // Attempt to load per-repo rules from BUGHUNTER.md (or .bughunter/rules.md)
-      // in the target repository at the PR's head commit via the GitHub API.
-      // This replaces the broken startup-time process.cwd() lookup that always
-      // pointed at the BugHunter application directory instead of the analyzed repo.
-      const repoRulesCandidatePaths = ["BUGHUNTER.md", ".bughunter/rules.md"];
-      let repoSpecificRules: CustomRule[] = [];
-      for (const candidatePath of repoRulesCandidatePaths) {
-        try {
-          const repoRulesContent = await this.github.getFileContent(
-            pr.owner,
-            pr.repo,
-            candidatePath,
-            pr.headSha
-          );
-          if (repoRulesContent !== null) {
-            repoSpecificRules = this.customRulesManager.parseMarkdown(
-              repoRulesContent,
-              `${pr.owner}/${pr.repo}:${candidatePath}`
-            );
-            logger.info(
-              `Loaded ${repoSpecificRules.length} per-repo custom rule(s) from ${candidatePath} in ${pr.owner}/${pr.repo}.`
-            );
-            break;
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          logger.debug(
-            `Could not fetch ${candidatePath} from ${pr.owner}/${pr.repo}@${pr.headSha}: ${message}`
-          );
-        }
-      }
-
+      // 2.6. Check against custom rules using the already-loaded repoSpecificRules.
       const ruleBugs: Bug[] = [];
       for (const [filePath, content] of fileContents) {
         const bugsFromRules = this.customRulesManager.checkAgainstRules(

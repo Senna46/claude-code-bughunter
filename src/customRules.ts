@@ -388,17 +388,20 @@ export class CustomRulesManager {
   }
 
   // ============================================================
-  // Format rules for prompt inclusion
+  // Format rules for prompt inclusion.
+  // additionalRules: per-repo rules to prepend (highest priority).
   // ============================================================
 
-  formatRulesForPrompt(): string {
-    if (this.rules.length === 0) {
+  formatRulesForPrompt(additionalRules: CustomRule[] = []): string {
+    const allRules = [...additionalRules, ...this.rules];
+
+    if (allRules.length === 0) {
       return "";
     }
 
     const lines: string[] = ["## Project-Specific Rules to Check", ""];
 
-    for (const rule of this.rules) {
+    for (const rule of allRules) {
       lines.push(`### ${rule.title} (Severity: ${rule.severity})`);
       lines.push(rule.description);
       if (rule.pattern) {

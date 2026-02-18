@@ -122,12 +122,14 @@ export class AgenticAnalyzer {
     prTitle: string,
     commitSha: string,
     repoPath: string,
-    previousBugs?: BugRecord[]
+    previousBugs?: BugRecord[],
+    customRulesText?: string
   ): Promise<AnalysisResult> {
     logger.info("Starting agentic bug analysis...", {
       diffLength: diff.length,
       prTitle,
       repoPath,
+      hasCustomRules: Boolean(customRulesText),
     });
 
     // Create a temporary workspace for the analysis
@@ -139,7 +141,8 @@ export class AgenticAnalyzer {
         workDir,
         prTitle,
         repoPath,
-        previousBugs
+        previousBugs,
+        customRulesText
       );
 
       logger.info(`Agentic analysis complete: ${result.bugs.length} bug(s) found.`, {
@@ -179,10 +182,11 @@ export class AgenticAnalyzer {
     workDir: string,
     prTitle: string,
     repoPath: string,
-    previousBugs?: BugRecord[]
+    previousBugs?: BugRecord[],
+    customRulesText?: string
   ): Promise<AnalysisResult> {
     const diffPath = join(workDir, "diff.patch");
-    const prompt = this.buildAgenticPrompt(prTitle, repoPath, diffPath, previousBugs);
+    const prompt = this.buildAgenticPrompt(prTitle, repoPath, diffPath, previousBugs, customRulesText);
 
     const args = [
       "-p",
@@ -266,7 +270,8 @@ export class AgenticAnalyzer {
     prTitle: string,
     repoPath: string,
     diffPath: string,
-    previousBugs?: BugRecord[]
+    previousBugs?: BugRecord[],
+    customRulesText?: string
   ): string {
     const sections: string[] = [];
 
@@ -279,6 +284,11 @@ export class AgenticAnalyzer {
       `to explore the full source tree directly. Start by reading the diff file at the path ` +
       `shown above, then investigate any suspicious patterns using the repository source files.`
     );
+
+    // Include custom rules so the agent can reason about project-specific constraints
+    if (customRulesText) {
+      sections.push(customRulesText);
+    }
 
     // Include previously reported bugs
     if (previousBugs && previousBugs.length > 0) {
