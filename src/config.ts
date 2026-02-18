@@ -53,7 +53,15 @@ export function loadConfig(): Config {
     process.env.BUGHUNTER_VOTE_THRESHOLD,
     2
   );
-  const enableValidator = process.env.BUGHUNTER_ENABLE_VALIDATOR?.trim().toLowerCase() !== "false";
+
+  if (voteThreshold > analysisPasses) {
+    throw new Error(
+      `Configuration error: BUGHUNTER_VOTE_THRESHOLD (${voteThreshold}) must not exceed BUGHUNTER_ANALYSIS_PASSES (${analysisPasses}). ` +
+        `With the current settings, no bug can ever receive enough votes to pass the threshold, so all detected bugs would be silently discarded. ` +
+        `Either increase BUGHUNTER_ANALYSIS_PASSES to at least ${voteThreshold}, or decrease BUGHUNTER_VOTE_THRESHOLD to at most ${analysisPasses}.`
+    );
+  }
+  const enableValidator = process.env.BUGHUNTER_ENABLE_VALIDATOR?.trim().toLowerCase() === "true";
   const validatorModel = process.env.BUGHUNTER_VALIDATOR_MODEL?.trim() || null;
 
   // Agentic analysis settings

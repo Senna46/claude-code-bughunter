@@ -9,12 +9,14 @@ import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 
 import { logger } from "./logger.js";
-import type {
-  AnalysisResult,
-  Bug,
-  BugRecord,
-  ClaudeAnalysisOutput,
-  Config,
+import {
+  createBugSimilarityKeys,
+  type AnalysisResult,
+  type Bug,
+  type BugRecord,
+  type ClaudeAnalysisOutput,
+  type Config,
+  type RiskLevel,
 } from "./types.js";
 
 // JSON schema for structured bug analysis output from claude -p
@@ -168,6 +170,7 @@ export class Analyzer {
         bugs: [],
         overview: "All analysis passes failed.",
         summary: "All analysis passes failed.",
+        rawSummary: "All analysis passes failed.",
         riskLevel: "low",
         commitSha,
         analyzedAt: new Date().toISOString(),
@@ -270,7 +273,7 @@ export class Analyzer {
     // Simple seeded random number generator
     const random = () => {
       seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      return seed / 0x7fffffff;
+      return seed / 0x80000000;
     };
 
     while (m > 1) {
@@ -336,8 +339,24 @@ export class Analyzer {
       return [];
     }
 
-    // Collect all bugs from all passes and group similar ones
+    // Warn if pass failures have made the vote threshold unreachable.
+    // Even though config.ts validates voteThreshold <= analysisPasses at startup,
+    // failures at runtime can reduce the effective pass count below the threshold,
+    // which would silently discard every detected bug.
+    if (successfulResults.length < voteThreshold) {
+      logger.warn(
+        `Vote threshold is unreachable: only ${successfulResults.length} pass(es) succeeded but voteThreshold is ${voteThreshold}. ` +
+          `All bugs detected in this analysis will be discarded. ` +
+          `Consider lowering BUGHUNTER_VOTE_THRESHOLD or investigating why passes are failing.`
+      );
+      return [];
+    }
+
+    // Collect all bugs from all passes and group similar ones.
+    // keyAlias maps every candidate key (primary + shifted) to the canonical key
+    // stored in bugVotes, so that boundary-straddling reports are merged correctly.
     const bugVotes = new Map<string, BugWithVotes>();
+    const keyAlias = new Map<string, string>();
 
     for (const result of successfulResults) {
       for (const bugData of result.output.bugs) {
@@ -351,19 +370,38 @@ export class Analyzer {
           endLine: bugData.endLine ?? null,
         };
 
-        // Create a key for similarity matching
-        const similarityKey = this.createBugSimilarityKey(bug);
+        // Generate primary + optional shifted key to tolerate bucket-boundary splits
+        const candidateKeys = createBugSimilarityKeys(bug);
 
-        if (bugVotes.has(similarityKey)) {
-          const existing = bugVotes.get(similarityKey)!;
-          existing.voteCount++;
-          existing.passIndices.push(result.passIndex);
+        // Find any existing canonical key via the alias map
+        let canonicalKey: string | undefined;
+        for (const key of candidateKeys) {
+          const alias = keyAlias.get(key);
+          if (alias !== undefined) {
+            canonicalKey = alias;
+            break;
+          }
+        }
+
+        if (canonicalKey !== undefined) {
+          const existing = bugVotes.get(canonicalKey)!;
+          // Only count one vote per pass to ensure voteThreshold requires independent agreement
+          if (!existing.passIndices.includes(result.passIndex)) {
+            existing.voteCount++;
+            existing.passIndices.push(result.passIndex);
+          }
         } else {
-          bugVotes.set(similarityKey, {
+          // New entry: register the first candidate key as canonical
+          canonicalKey = candidateKeys[0];
+          bugVotes.set(canonicalKey, {
             bug,
             voteCount: 1,
             passIndices: [result.passIndex],
           });
+          // Register all candidate keys as aliases pointing to the canonical key
+          for (const key of candidateKeys) {
+            keyAlias.set(key, canonicalKey);
+          }
         }
       }
     }
@@ -382,22 +420,6 @@ export class Analyzer {
   }
 
   // ============================================================
-  // Create a similarity key for bug deduplication
-  // ============================================================
-
-  private createBugSimilarityKey(bug: Bug): string {
-    // Normalize the bug for comparison
-    const normalizedTitle = bug.title.toLowerCase().trim();
-    const normalizedFile = bug.filePath.toLowerCase().trim();
-    
-    // Include approximate line location (within 5 lines)
-    const lineBucket = bug.startLine ? Math.floor(bug.startLine / 5) : 0;
-    
-    // Create a key that groups similar bugs
-    return `${normalizedFile}:${lineBucket}:${normalizedTitle.substring(0, 50)}`;
-  }
-
-  // ============================================================
   // Combine results from multiple passes
   // ============================================================
 
@@ -413,6 +435,7 @@ export class Analyzer {
         bugs: [],
         overview: "All analysis passes failed.",
         summary: "All analysis passes failed.",
+        rawSummary: "All analysis passes failed.",
         riskLevel: "low",
         commitSha,
         analyzedAt: new Date().toISOString(),
@@ -429,10 +452,27 @@ export class Analyzer {
     return {
       bugs: votedBugs,
       overview: firstResult.overview,
+      // summary is the display string with voting prefix; rawSummary preserves the
+      // original Claude text so buildAnalysisMeta callers can pass it without
+      // re-prepending the voting prefix a second time.
       summary: this.buildSummaryFromVotedBugs(votedBugs, firstResult.summary),
+      rawSummary: firstResult.summary,
       riskLevel,
       commitSha,
       analyzedAt: new Date().toISOString(),
+    };
+  }
+
+  // ============================================================
+  // Rebuild summary and riskLevel from a final bug list.
+  // Used after agentic merging or validation changes the bug set,
+  // so that these metadata fields stay consistent with bugs.length.
+  // ============================================================
+
+  buildAnalysisMeta(bugs: Bug[], originalSummary = ""): { summary: string; riskLevel: RiskLevel } {
+    return {
+      summary: this.buildSummaryFromVotedBugs(bugs, originalSummary),
+      riskLevel: this.calculateRiskLevel(bugs),
     };
   }
 
@@ -466,7 +506,11 @@ export class Analyzer {
 
   private buildSummaryFromVotedBugs(bugs: Bug[], originalSummary: string): string {
     if (bugs.length === 0) {
-      return "No bugs found after majority voting.";
+      // Prefer the original Claude summary when no bugs survived voting,
+      // as it may contain useful "no issues found" context.
+      return originalSummary.trim() !== ""
+        ? originalSummary
+        : "No bugs found after majority voting.";
     }
 
     const severityCounts = {
@@ -490,7 +534,14 @@ export class Analyzer {
       parts.push(`${severityCounts.low} low`);
     }
 
-    return `Found ${bugs.length} bug(s) after majority voting: ${parts.join(", ")} severity.`;
+    const votingSummary = `Found ${bugs.length} bug(s) after majority voting: ${parts.join(", ")} severity.`;
+
+    // Append the original Claude summary as additional context when available.
+    if (originalSummary.trim() !== "") {
+      return `${votingSummary} ${originalSummary}`;
+    }
+
+    return votingSummary;
   }
 
   // ============================================================

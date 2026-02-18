@@ -5,6 +5,8 @@
 // Limitations: Single-threaded; processes PRs sequentially within
 //   each polling cycle. Graceful shutdown on SIGINT/SIGTERM.
 
+import { join } from "path";
+
 import { AgenticAnalyzer } from "./agenticAnalyzer.js";
 import { Analyzer } from "./analyzer.js";
 import { ApprovalHandler } from "./approvalHandler.js";
@@ -19,7 +21,13 @@ import { MetricsManager } from "./metrics.js";
 import { PrMonitor } from "./prMonitor.js";
 import type { PrWithNewCommits } from "./prMonitor.js";
 import { StateStore } from "./state.js";
-import type { Bug, BugRecord, Config, PullRequest } from "./types.js";
+import {
+  createBugSimilarityKeys,
+  type Bug,
+  type BugRecord,
+  type Config,
+  type PullRequest,
+} from "./types.js";
 import { BugValidator } from "./validator.js";
 
 class BugHunterDaemon {
@@ -263,7 +271,7 @@ class BugHunterDaemon {
 
       // 1.6. Dynamic context discovery (or fall back to pre-fetching)
       let fileContents: Map<string, string>;
-      
+
       if (this.config.enableDynamicContext) {
         // Use dynamic context discovery for token-efficient context loading
         const contextManager = new DynamicContextManager(
@@ -275,33 +283,39 @@ class BugHunterDaemon {
             return this.github.getFileContent(owner, repo, filePath, ref);
           }
         );
-        
+
         // Extract suspicious patterns from diff for prioritization
         const suspiciousPatterns = DynamicContextManager.extractSuspiciousPatterns(diff);
-        
+
         // Get context on-demand
         fileContents = await contextManager.getContextForDiff(diff, suspiciousPatterns);
-        
-        logger.info(
-          `Dynamic context discovery loaded ${fileContents.size} file(s).`,
-          { 
-            filePaths: [...fileContents.keys()],
-            suspiciousPatterns: suspiciousPatterns.slice(0, 5),
-          }
-        );
+
+        if (fileContents.size > 0) {
+          logger.info(
+            `Dynamic context discovery loaded ${fileContents.size} file(s).`,
+            {
+              filePaths: [...fileContents.keys()],
+              suspiciousPatterns: suspiciousPatterns.slice(0, 5),
+            }
+          );
+        }
       } else {
         // Fall back to pre-fetching all changed files
+        // Parallelize independent HTTP requests to reduce total latency
         const changedFilePaths = this.analyzer.extractChangedFilePaths(diff);
         fileContents = new Map<string, string>();
-        for (const filePath of changedFilePaths) {
-          const content = await this.github.getFileContent(
-            pr.owner,
-            pr.repo,
-            filePath,
-            pr.headSha
-          );
-          if (content !== null) {
-            fileContents.set(filePath, content);
+        const fileContentResults = await Promise.allSettled(
+          changedFilePaths.map((filePath) =>
+            this.github
+              .getFileContent(pr.owner, pr.repo, filePath, pr.headSha)
+              .then((content) => ({ filePath, content }))
+          )
+        );
+        for (const result of fileContentResults) {
+          if (result.status === "fulfilled" && result.value.content !== null) {
+            fileContents.set(result.value.filePath, result.value.content);
+          } else if (result.status === "rejected") {
+            logger.warn(`Failed to fetch file content: ${result.reason}`);
           }
         }
         if (fileContents.size > 0) {
@@ -325,20 +339,26 @@ class BugHunterDaemon {
       if (this.config.enableAgenticAnalysis) {
         logger.info("Running agentic analysis for deeper investigation...");
         try {
+          const repoPath = join(this.config.workDir, pr.owner, pr.repo);
           const agenticAnalysis = await this.agenticAnalyzer.analyzeDiff(
             diff,
             pr.title,
             latestCommitSha,
-            this.config.workDir,
+            repoPath,
             previousBugs.length > 0 ? previousBugs : undefined
           );
           
           // Merge results from both analyses
           const mergedBugs = this.mergeBugResults(analysis.bugs, agenticAnalysis.bugs);
           logger.info(`Agentic analysis merged: ${analysis.bugs.length} + ${agenticAnalysis.bugs.length} -> ${mergedBugs.length} bugs`);
+          // Pass rawSummary (the original Claude text without voting prefix) so that
+          // buildAnalysisMeta does not double-prepend the "Found N bug(s)" prefix.
+          const mergedMeta = this.analyzer.buildAnalysisMeta(mergedBugs, analysis.rawSummary);
           analysis = {
             ...analysis,
             bugs: mergedBugs,
+            summary: mergedMeta.summary,
+            riskLevel: mergedMeta.riskLevel,
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -371,24 +391,40 @@ class BugHunterDaemon {
         );
         ruleBugs.push(...bugsFromRules);
       }
-      
+
       if (ruleBugs.length > 0) {
         logger.info(`Found ${ruleBugs.length} bug(s) from custom rules`, {
           ruleBugCount: ruleBugs.length,
         });
         // Merge with validated bugs, avoiding duplicates
-        const existingKeys = new Set(validatedBugs.map((b) => this.createBugKey(b)));
+        const existingKeys = new Set<string>();
+        for (const b of validatedBugs) {
+          for (const key of createBugSimilarityKeys(b)) {
+            existingKeys.add(key);
+          }
+        }
         for (const bug of ruleBugs) {
-          if (!existingKeys.has(this.createBugKey(bug))) {
+          const candidateKeys = createBugSimilarityKeys(bug);
+          const alreadySeen = candidateKeys.some((k) => existingKeys.has(k));
+          if (!alreadySeen) {
             validatedBugs.push(bug);
+            for (const key of candidateKeys) {
+              existingKeys.add(key);
+            }
           }
         }
       }
 
-      // Update analysis with validated bugs
+      // Update analysis with validated bugs, recomputing summary/riskLevel
+      // so they reflect the final bug count rather than the pre-validation set.
+      // Pass rawSummary (the original Claude text without voting prefix) so that
+      // buildAnalysisMeta does not double-prepend the "Found N bug(s)" prefix.
+      const validatedMeta = this.analyzer.buildAnalysisMeta(validatedBugs, analysis.rawSummary);
       const validatedAnalysis = {
         ...analysis,
         bugs: validatedBugs,
+        summary: validatedMeta.summary,
+        riskLevel: validatedMeta.riskLevel,
       };
 
       // 3. Record all new commits as analyzed
@@ -668,24 +704,28 @@ class BugHunterDaemon {
 
   private mergeBugResults(bugs1: Bug[], bugs2: Bug[]): Bug[] {
     const merged: Bug[] = [...bugs1];
-    const seenKeys = new Set(bugs1.map((b) => this.createBugKey(b)));
 
-    for (const bug of bugs2) {
-      const key = this.createBugKey(bug);
-      if (!seenKeys.has(key)) {
-        merged.push(bug);
+    // Seed seenKeys with all candidate keys (primary + shifted) from bugs1
+    // so that boundary-adjacent duplicates in bugs2 are correctly detected.
+    const seenKeys = new Set<string>();
+    for (const b of bugs1) {
+      for (const key of createBugSimilarityKeys(b)) {
         seenKeys.add(key);
       }
     }
 
-    return merged;
-  }
+    for (const bug of bugs2) {
+      const candidateKeys = createBugSimilarityKeys(bug);
+      const alreadySeen = candidateKeys.some((k) => seenKeys.has(k));
+      if (!alreadySeen) {
+        merged.push(bug);
+        for (const key of candidateKeys) {
+          seenKeys.add(key);
+        }
+      }
+    }
 
-  private createBugKey(bug: Bug): string {
-    const normalizedTitle = bug.title.toLowerCase().trim();
-    const normalizedFile = bug.filePath.toLowerCase().trim();
-    const lineBucket = bug.startLine ? Math.floor(bug.startLine / 5) : 0;
-    return `${normalizedFile}:${lineBucket}:${normalizedTitle.substring(0, 50)}`;
+    return merged;
   }
 }
 

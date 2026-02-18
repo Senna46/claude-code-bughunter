@@ -361,10 +361,14 @@ When done, output your findings as JSON with the following structure:
         endLine: bug.endLine ?? null,
       }));
 
+      const rawSummary = data.summary || "No summary provided.";
       return {
         bugs,
         overview: data.overview || "No overview provided.",
-        summary: data.summary || "No summary provided.",
+        // Agentic analysis returns Claude's summary directly (no voting prefix).
+        // Both summary and rawSummary are the same here.
+        summary: rawSummary,
+        rawSummary,
         riskLevel: (data.riskLevel as "low" | "medium" | "high") || "low",
         commitSha: "",
         analyzedAt: new Date().toISOString(),
@@ -380,6 +384,7 @@ When done, output your findings as JSON with the following structure:
         bugs: [],
         overview: "Agentic analysis output could not be parsed.",
         summary: "Agentic analysis output could not be parsed.",
+        rawSummary: "Agentic analysis output could not be parsed.",
         riskLevel: "low",
         commitSha: "",
         analyzedAt: new Date().toISOString(),
