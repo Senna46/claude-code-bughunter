@@ -204,7 +204,7 @@ Determine if this is a real bug that should be reported. Respond with structured
     for (const line of lines) {
       if (line.startsWith("diff --git")) {
         // Check if this is our target file
-        if (line.includes(` b/${filePath}`) || line.includes(` ${filePath}`)) {
+        if (line.endsWith(` b/${filePath}`) || line.endsWith(` ${filePath}`)) {
           inTargetFile = true;
           foundFile = true;
         } else if (inTargetFile) {

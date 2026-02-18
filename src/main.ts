@@ -251,17 +251,21 @@ class BugHunterDaemon {
       }
 
       // Fetch full source of changed files for richer analysis context
+      // Parallelize independent HTTP requests to reduce total latency
       const changedFilePaths = this.analyzer.extractChangedFilePaths(diff);
       const fileContents = new Map<string, string>();
-      for (const filePath of changedFilePaths) {
-        const content = await this.github.getFileContent(
-          pr.owner,
-          pr.repo,
-          filePath,
-          pr.headSha
-        );
-        if (content !== null) {
-          fileContents.set(filePath, content);
+      const fileContentResults = await Promise.allSettled(
+        changedFilePaths.map((filePath) =>
+          this.github
+            .getFileContent(pr.owner, pr.repo, filePath, pr.headSha)
+            .then((content) => ({ filePath, content }))
+        )
+      );
+      for (const result of fileContentResults) {
+        if (result.status === "fulfilled" && result.value.content !== null) {
+          fileContents.set(result.value.filePath, result.value.content);
+        } else if (result.status === "rejected") {
+          logger.warn(`Failed to fetch file content: ${result.reason}`);
         }
       }
       if (fileContents.size > 0) {
