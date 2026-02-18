@@ -337,6 +337,19 @@ export class Analyzer {
       return [];
     }
 
+    // Warn if pass failures have made the vote threshold unreachable.
+    // Even though config.ts validates voteThreshold <= analysisPasses at startup,
+    // failures at runtime can reduce the effective pass count below the threshold,
+    // which would silently discard every detected bug.
+    if (successfulResults.length < voteThreshold) {
+      logger.warn(
+        `Vote threshold is unreachable: only ${successfulResults.length} pass(es) succeeded but voteThreshold is ${voteThreshold}. ` +
+          `All bugs detected in this analysis will be discarded. ` +
+          `Consider lowering BUGHUNTER_VOTE_THRESHOLD or investigating why passes are failing.`
+      );
+      return [];
+    }
+
     // Collect all bugs from all passes and group similar ones
     const bugVotes = new Map<string, BugWithVotes>();
 
