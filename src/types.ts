@@ -113,12 +113,6 @@ export function createBugSimilarityKeys(bug: Bug): string[] {
   return [primaryKey];
 }
 
-// Convenience wrapper returning only the primary similarity key.
-// Prefer createBugSimilarityKeys when boundary-tolerant matching is needed.
-export function createBugSimilarityKey(bug: Bug): string {
-  return createBugSimilarityKeys(bug)[0];
-}
-
 export interface AnalysisResult {
   bugs: Bug[];
   overview: string;
