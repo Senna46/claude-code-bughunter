@@ -30,8 +30,6 @@ export interface Config {
   enableDynamicContext: boolean;
   dynamicContextMaxFiles: number;
   dynamicContextMaxLines: number;
-  // Custom rules settings
-  customRulesPath: string | null;
 }
 
 // ============================================================

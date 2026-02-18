@@ -26,7 +26,6 @@ import {
   type Bug,
   type BugRecord,
   type Config,
-  type CustomRule,
   type PullRequest,
 } from "./types.js";
 import { BugValidator } from "./validator.js";
@@ -178,8 +177,7 @@ class BugHunterDaemon {
       try {
         await this.pollCycle();
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         logger.error("Error in polling cycle.", { error: message });
       }
 
@@ -202,8 +200,7 @@ class BugHunterDaemon {
     logger.info("Starting polling cycle...");
 
     // 1. Discover PRs with new commits
-    const prsWithNewCommits =
-      await this.prMonitor.discoverPrsWithNewCommits();
+    const prsWithNewCommits = await this.prMonitor.discoverPrsWithNewCommits();
 
     // 2. Process each PR with new commits
     for (const prData of prsWithNewCommits) {
@@ -218,8 +215,7 @@ class BugHunterDaemon {
       try {
         await this.approvalHandler.processApprovals(pr);
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         logger.error(
           `Error processing approvals for PR #${pr.number} in ${pr.owner}/${pr.repo}.`,
           { error: message }
@@ -284,10 +280,14 @@ class BugHunterDaemon {
         );
 
         // Extract suspicious patterns from diff for prioritization
-        const suspiciousPatterns = DynamicContextManager.extractSuspiciousPatterns(diff);
+        const suspiciousPatterns =
+          DynamicContextManager.extractSuspiciousPatterns(diff);
 
         // Get context on-demand
-        fileContents = await contextManager.getContextForDiff(diff, suspiciousPatterns);
+        fileContents = await contextManager.getContextForDiff(
+          diff,
+          suspiciousPatterns
+        );
 
         if (fileContents.size > 0) {
           logger.info(
@@ -325,42 +325,11 @@ class BugHunterDaemon {
         }
       }
 
-      // 2. Load per-repo custom rules before analysis so Claude can reason about them.
-      // Fetch BUGHUNTER.md from the target repository at the PR's head commit via
-      // the GitHub API (the process.cwd() lookup at startup always pointed at the
-      // BugHunter application directory, not the analyzed repo).
-      const repoRulesCandidatePaths = ["BUGHUNTER.md", ".bughunter/rules.md"];
-      let repoSpecificRules: CustomRule[] = [];
-      for (const candidatePath of repoRulesCandidatePaths) {
-        try {
-          const repoRulesContent = await this.github.getFileContent(
-            pr.owner,
-            pr.repo,
-            candidatePath,
-            pr.headSha
-          );
-          if (repoRulesContent !== null) {
-            repoSpecificRules = this.customRulesManager.parseMarkdown(
-              repoRulesContent,
-              `${pr.owner}/${pr.repo}:${candidatePath}`
-            );
-            logger.info(
-              `Loaded ${repoSpecificRules.length} per-repo custom rule(s) from ${candidatePath} in ${pr.owner}/${pr.repo}.`
-            );
-            break;
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          logger.debug(
-            `Could not fetch ${candidatePath} from ${pr.owner}/${pr.repo}@${pr.headSha}: ${message}`
-          );
-        }
-      }
+      // 2. Build the formatted rules string so Claude can reason about built-in rules.
+      const customRulesText =
+        this.customRulesManager.formatRulesForPrompt() || undefined;
 
-      // Build the formatted rules string once; both analyzers share it.
-      const customRulesText = this.customRulesManager.formatRulesForPrompt(repoSpecificRules) || undefined;
-
-      // 2.1. Analyze diff for bugs (with previous findings, file context, and custom rules)
+      // 2.1. Analyze diff for bugs (with previous findings, file context, and built-in rules)
       let analysis = await this.analyzer.analyzeDiff(
         diff,
         pr.title,
@@ -383,13 +352,21 @@ class BugHunterDaemon {
             previousBugs.length > 0 ? previousBugs : undefined,
             customRulesText
           );
-          
+
           // Merge results from both analyses
-          const mergedBugs = this.mergeBugResults(analysis.bugs, agenticAnalysis.bugs);
-          logger.info(`Agentic analysis merged: ${analysis.bugs.length} + ${agenticAnalysis.bugs.length} -> ${mergedBugs.length} bugs`);
+          const mergedBugs = this.mergeBugResults(
+            analysis.bugs,
+            agenticAnalysis.bugs
+          );
+          logger.info(
+            `Agentic analysis merged: ${analysis.bugs.length} + ${agenticAnalysis.bugs.length} -> ${mergedBugs.length} bugs`
+          );
           // Pass rawSummary (the original Claude text without voting prefix) so that
           // buildAnalysisMeta does not double-prepend the "Found N bug(s)" prefix.
-          const mergedMeta = this.analyzer.buildAnalysisMeta(mergedBugs, analysis.rawSummary);
+          const mergedMeta = this.analyzer.buildAnalysisMeta(
+            mergedBugs,
+            analysis.rawSummary
+          );
           analysis = {
             ...analysis,
             bugs: mergedBugs,
@@ -397,8 +374,11 @@ class BugHunterDaemon {
             riskLevel: mergedMeta.riskLevel,
           };
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          logger.warn(`Agentic analysis failed, continuing with standard analysis: ${message}`);
+          const message =
+            error instanceof Error ? error.message : String(error);
+          logger.warn(
+            `Agentic analysis failed, continuing with standard analysis: ${message}`
+          );
         }
       }
 
@@ -413,26 +393,28 @@ class BugHunterDaemon {
           diff,
           fileContents.size > 0 ? fileContents : undefined
         );
-        logger.info(`Validation complete: ${validatedBugs.length} bug(s) confirmed`, {
-          originalCount: analysis.bugs.length,
-          validatedCount: validatedBugs.length,
-        });
+        logger.info(
+          `Validation complete: ${validatedBugs.length} bug(s) confirmed`,
+          {
+            originalCount: analysis.bugs.length,
+            validatedCount: validatedBugs.length,
+          }
+        );
       }
 
-      // 2.6. Check against custom rules using the already-loaded repoSpecificRules.
+      // 2.6. Check against built-in rules (regex-based detection).
       const ruleBugs: Bug[] = [];
       for (const [filePath, content] of fileContents) {
         const bugsFromRules = this.customRulesManager.checkAgainstRules(
           content,
           filePath,
-          diff,
-          repoSpecificRules
+          diff
         );
         ruleBugs.push(...bugsFromRules);
       }
 
       if (ruleBugs.length > 0) {
-        logger.info(`Found ${ruleBugs.length} bug(s) from custom rules`, {
+        logger.info(`Found ${ruleBugs.length} bug(s) from built-in rules`, {
           ruleBugCount: ruleBugs.length,
         });
         // Merge with validated bugs, avoiding duplicates.
@@ -463,7 +445,10 @@ class BugHunterDaemon {
       // so they reflect the final bug count rather than the pre-validation set.
       // Pass rawSummary (the original Claude text without voting prefix) so that
       // buildAnalysisMeta does not double-prepend the "Found N bug(s)" prefix.
-      const validatedMeta = this.analyzer.buildAnalysisMeta(validatedBugs, analysis.rawSummary);
+      const validatedMeta = this.analyzer.buildAnalysisMeta(
+        validatedBugs,
+        analysis.rawSummary
+      );
       const validatedAnalysis = {
         ...analysis,
         bugs: validatedBugs,
@@ -529,20 +514,15 @@ class BugHunterDaemon {
         );
       }
 
-      logger.info(
-        `Completed processing PR #${pr.number} in ${repoFullName}.`,
-        {
-          bugsFound: validatedAnalysis.bugs.length,
-          riskLevel: validatedAnalysis.riskLevel,
-        }
-      );
+      logger.info(`Completed processing PR #${pr.number} in ${repoFullName}.`, {
+        bugsFound: validatedAnalysis.bugs.length,
+        riskLevel: validatedAnalysis.riskLevel,
+      });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
-      logger.error(
-        `Error processing PR #${pr.number} in ${repoFullName}.`,
-        { error: message }
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`Error processing PR #${pr.number} in ${repoFullName}.`, {
+        error: message,
+      });
 
       // Set commit status to error (grey indicator) - analysis failed
       await this.github.createCommitStatus(
@@ -626,7 +606,11 @@ class BugHunterDaemon {
           .map((b) => `- ${b.title}`)
           .join("\n");
         const prTitle = `fix: BugHunter autofix for #${pr.number}`;
-        const prBody = `Automated bug fixes for PR #${pr.number} (\`${pr.title}\`).\n\nFixed issues:\n${bugTitles}${bugs.length > 5 ? `\n- ... and ${bugs.length - 5} more` : ""}`;
+        const prBody = `Automated bug fixes for PR #${pr.number} (\`${
+          pr.title
+        }\`).\n\nFixed issues:\n${bugTitles}${
+          bugs.length > 5 ? `\n- ... and ${bugs.length - 5} more` : ""
+        }`;
 
         const fixPr = await this.github.createPullRequest(
           pr.owner,
@@ -649,8 +633,7 @@ class BugHunterDaemon {
           fixPr.htmlUrl
         );
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         logger.error("Failed to create fix PR.", {
           prNumber: pr.number,
           repo: repoFullName,
@@ -791,8 +774,7 @@ async function main(): Promise<void> {
     await daemon.initialize();
     await daemon.run();
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : String(error);
     console.error(`[FATAL] ${message}`);
     process.exit(1);
   }

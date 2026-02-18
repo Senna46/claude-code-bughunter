@@ -61,18 +61,22 @@ export function loadConfig(): Config {
         `Either increase BUGHUNTER_ANALYSIS_PASSES to at least ${voteThreshold}, or decrease BUGHUNTER_VOTE_THRESHOLD to at most ${analysisPasses}.`
     );
   }
-  const enableValidator = process.env.BUGHUNTER_ENABLE_VALIDATOR?.trim().toLowerCase() !== "false";
+  const enableValidator =
+    process.env.BUGHUNTER_ENABLE_VALIDATOR?.trim().toLowerCase() !== "false";
   const validatorModel = process.env.BUGHUNTER_VALIDATOR_MODEL?.trim() || null;
 
   // Agentic analysis settings
-  const enableAgenticAnalysis = process.env.BUGHUNTER_ENABLE_AGENTIC?.trim().toLowerCase() === "true";
+  const enableAgenticAnalysis =
+    process.env.BUGHUNTER_ENABLE_AGENTIC?.trim().toLowerCase() === "true";
   const agenticMaxTurns = parsePositiveInt(
     process.env.BUGHUNTER_AGENTIC_MAX_TURNS,
     10
   );
 
   // Dynamic context discovery settings
-  const enableDynamicContext = process.env.BUGHUNTER_ENABLE_DYNAMIC_CONTEXT?.trim().toLowerCase() !== "false";
+  const enableDynamicContext =
+    process.env.BUGHUNTER_ENABLE_DYNAMIC_CONTEXT?.trim().toLowerCase() !==
+    "false";
   const dynamicContextMaxFiles = parsePositiveInt(
     process.env.BUGHUNTER_DYNAMIC_CONTEXT_MAX_FILES,
     10
@@ -81,9 +85,6 @@ export function loadConfig(): Config {
     process.env.BUGHUNTER_DYNAMIC_CONTEXT_MAX_LINES,
     500
   );
-
-  // Custom rules settings
-  const customRulesPath = process.env.BUGHUNTER_CUSTOM_RULES_PATH?.trim() || null;
 
   return {
     githubOrgs,
@@ -106,7 +107,6 @@ export function loadConfig(): Config {
     enableDynamicContext,
     dynamicContextMaxFiles,
     dynamicContextMaxLines,
-    customRulesPath,
   };
 }
 
@@ -140,7 +140,9 @@ function parseAutofixMode(value: string | undefined): AutofixMode {
   const mode = (value?.trim().toLowerCase() || "branch") as AutofixMode;
   if (!VALID_AUTOFIX_MODES.includes(mode)) {
     throw new Error(
-      `Configuration error: Invalid autofix mode "${value}". Valid modes: ${VALID_AUTOFIX_MODES.join(", ")}`
+      `Configuration error: Invalid autofix mode "${value}". Valid modes: ${VALID_AUTOFIX_MODES.join(
+        ", "
+      )}`
     );
   }
   return mode;
@@ -150,7 +152,9 @@ function parseLogLevel(value: string | undefined): LogLevel {
   const level = (value?.trim().toLowerCase() || "info") as LogLevel;
   if (!VALID_LOG_LEVELS.includes(level)) {
     throw new Error(
-      `Configuration error: Invalid log level "${value}". Valid levels: ${VALID_LOG_LEVELS.join(", ")}`
+      `Configuration error: Invalid log level "${value}". Valid levels: ${VALID_LOG_LEVELS.join(
+        ", "
+      )}`
     );
   }
   return level;

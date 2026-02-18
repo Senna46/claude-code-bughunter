@@ -1,21 +1,20 @@
 // Custom rules module for Claude Code BugHunter.
-// Supports project-specific bug detection rules via BUGHUNTER.md file.
-// Inspired by Cursor Bugbot's BUGBOT.md custom rules feature.
-// Limitations: Requires manual rule file creation; pattern matching
-//   may have false positives/negatives.
-
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+// Ships a set of built-in detection rules (SQL injection, eval, hardcoded
+// secrets, etc.) and exposes helpers used by the analysis pipeline:
+//   - formatRulesForPrompt(): embeds rules in the Claude analysis prompt
+//   - checkAgainstRules(): regex-based post-analysis check on file contents
+// Limitations: Pattern matching may have false positives/negatives.
 
 import { logger } from "./logger.js";
-import type { Bug, BugSeverity, Config, CustomRule } from "./types.js";
+import type { Bug, Config, CustomRule } from "./types.js";
 
 // Default rules that are always applied
 const DEFAULT_RULES: CustomRule[] = [
   {
     id: "default-sql-injection",
     title: "Potential SQL Injection",
-    description: "String concatenation or template literals in SQL queries may lead to SQL injection vulnerabilities. Use parameterized queries instead.",
+    description:
+      "String concatenation or template literals in SQL queries may lead to SQL injection vulnerabilities. Use parameterized queries instead.",
     severity: "critical",
     pattern: "(SELECT|INSERT|UPDATE|DELETE).*\\+|`.*\\$\\{.*\\}.*`",
     checkType: "must-not-contain",
@@ -23,7 +22,8 @@ const DEFAULT_RULES: CustomRule[] = [
   {
     id: "default-eval-usage",
     title: "Dangerous eval() Usage",
-    description: "Using eval() with user input is extremely dangerous and can lead to code injection vulnerabilities.",
+    description:
+      "Using eval() with user input is extremely dangerous and can lead to code injection vulnerabilities.",
     severity: "critical",
     pattern: "eval\\s*\\(",
     checkType: "must-not-contain",
@@ -31,15 +31,18 @@ const DEFAULT_RULES: CustomRule[] = [
   {
     id: "default-hardcoded-secrets",
     title: "Potential Hardcoded Secret",
-    description: "Hardcoded secrets (API keys, passwords, tokens) in source code can be leaked. Use environment variables or secret management systems.",
+    description:
+      "Hardcoded secrets (API keys, passwords, tokens) in source code can be leaked. Use environment variables or secret management systems.",
     severity: "high",
-    pattern: "(api[_-]?key|password|secret|token|auth)\\s*[=:]\\s*['\"][^'\"]+['\"]",
+    pattern:
+      "(api[_-]?key|password|secret|token|auth)\\s*[=:]\\s*['\"][^'\"]+['\"]",
     checkType: "must-not-contain",
   },
   {
     id: "default-any-type",
     title: "Explicit 'any' Type Usage",
-    description: "Using 'any' type defeats TypeScript's type checking. Consider using a more specific type or 'unknown' with type guards.",
+    description:
+      "Using 'any' type defeats TypeScript's type checking. Consider using a more specific type or 'unknown' with type guards.",
     severity: "medium",
     pattern: ":\\s*any",
     checkType: "must-not-contain",
@@ -47,7 +50,8 @@ const DEFAULT_RULES: CustomRule[] = [
   {
     id: "default-console-log",
     title: "Console.log in Production Code",
-    description: "Console.log statements should be removed before production deployment. Consider using a proper logging library.",
+    description:
+      "Console.log statements should be removed before production deployment. Consider using a proper logging library.",
     severity: "low",
     pattern: "console\\.(log|debug|info)\\s*\\(",
     checkType: "must-not-contain",
@@ -55,179 +59,23 @@ const DEFAULT_RULES: CustomRule[] = [
 ];
 
 export class CustomRulesManager {
-  private config: Config;
   private rules: CustomRule[];
 
-  constructor(config: Config) {
-    this.config = config;
+  constructor(_config: Config) {
     this.rules = [...DEFAULT_RULES];
-    this.loadCustomRules();
-  }
-
-  // ============================================================
-  // Load custom rules from file
-  // ============================================================
-
-  private loadCustomRules(): void {
-    const rulesPath = this.config.customRulesPath;
-
-    if (rulesPath) {
-      // Load from specified path
-      this.loadRulesFromFile(rulesPath);
-    } else {
-      // Try default locations
-      const defaultPaths = [
-        join(process.cwd(), "BUGHUNTER.md"),
-        join(process.cwd(), ".bughunter", "rules.md"),
-      ];
-
-      for (const path of defaultPaths) {
-        if (existsSync(path)) {
-          this.loadRulesFromFile(path);
-          break;
-        }
-      }
-    }
-
-    logger.info(`Loaded ${this.rules.length} custom rules`, {
-      defaultRules: DEFAULT_RULES.length,
-      customRules: this.rules.length - DEFAULT_RULES.length,
+    logger.info(`Loaded ${this.rules.length} built-in rules`, {
+      ruleCount: this.rules.length,
     });
   }
 
   // ============================================================
-  // Parse rules from markdown file
-  // ============================================================
-
-  private loadRulesFromFile(filePath: string): void {
-    try {
-      if (!existsSync(filePath)) {
-        logger.debug(`Custom rules file not found: ${filePath}`);
-        return;
-      }
-
-      const content = readFileSync(filePath, "utf-8");
-      const customRules = this.parseRulesFromMarkdown(content, filePath);
-
-      // Add custom rules to the beginning (higher priority)
-      this.rules = [...customRules, ...this.rules];
-
-      logger.info(`Loaded ${customRules.length} custom rules from ${filePath}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.warn(`Failed to load custom rules from ${filePath}: ${message}`);
-    }
-  }
-
-  // ============================================================
-  // Parse rules from markdown content
-  // ============================================================
-
-  private parseRulesFromMarkdown(content: string, filePath: string): CustomRule[] {
-    const rules: CustomRule[] = [];
-    const lines = content.split("\n");
-
-    let currentRule: Partial<CustomRule> | null = null;
-    let inRuleBlock = false;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-
-      // Check for rule start (## Rule: or ### Rule:)
-      if (line.match(/^#{2,3}\s+(?:Rule:\s*)?(.+)$/i)) {
-        // Save previous rule if exists
-        if (currentRule && currentRule.title && currentRule.description) {
-          rules.push(this.finalizeRule(currentRule, filePath, rules.length));
-        }
-
-        currentRule = {
-          id: `custom-${filePath}-${rules.length}`,
-          title: line.replace(/^#{2,3}\s+(?:Rule:\s*)?/i, ""),
-          severity: "medium",
-          checkType: "must-not-contain",
-        };
-        inRuleBlock = true;
-        continue;
-      }
-
-      // Parse rule properties
-      if (currentRule && inRuleBlock) {
-        // Severity
-        if (line.match(/^-?\s*severity:\s*(low|medium|high|critical)$/i)) {
-          currentRule.severity = line.split(":")[1].trim().toLowerCase() as BugSeverity;
-        }
-        // Pattern
-        else if (line.match(/^-?\s*pattern:\s*.+$/i)) {
-          currentRule.pattern = line.replace(/^-?\s*pattern:\s*/i, "").trim();
-        }
-        // File pattern
-        else if (line.match(/^-?\s*file[_-]?pattern:\s*.+$/i)) {
-          currentRule.filePattern = line.replace(/^-?\s*file[_-]?pattern:\s*/i, "").trim();
-        }
-        // Check type
-        else if (line.match(/^-?\s*check[_-]?type:\s*(always|never|must-contain|must-not-contain)$/i)) {
-          currentRule.checkType = line.split(":")[1].trim().toLowerCase() as CustomRule["checkType"];
-        }
-        // Description (any other non-empty line)
-        else if (line && !line.startsWith("#") && !line.startsWith("<!--")) {
-          if (!currentRule.description) {
-            currentRule.description = line;
-          } else {
-            currentRule.description += " " + line;
-          }
-        }
-      }
-    }
-
-    // Save last rule
-    if (currentRule && currentRule.title && currentRule.description) {
-      rules.push(this.finalizeRule(currentRule, filePath, rules.length));
-    }
-
-    return rules;
-  }
-
-  // ============================================================
-  // Finalize a parsed rule
-  // ============================================================
-
-  private finalizeRule(partial: Partial<CustomRule>, filePath: string, index: number): CustomRule {
-    return {
-      id: partial.id || `custom-${filePath}-${index}`,
-      title: partial.title || "Untitled Rule",
-      description: partial.description || "No description provided",
-      severity: partial.severity || "medium",
-      pattern: partial.pattern,
-      filePattern: partial.filePattern,
-      checkType: partial.checkType || "must-not-contain",
-    };
-  }
-
-  // ============================================================
-  // Parse markdown content into custom rules (public, for per-PR use)
-  // ============================================================
-
-  parseMarkdown(content: string, source: string): CustomRule[] {
-    return this.parseRulesFromMarkdown(content, source);
-  }
-
-  // ============================================================
   // Check code against all rules
-  // repoRules: additional per-PR rules loaded from the target repo's BUGHUNTER.md
   // ============================================================
 
-  checkAgainstRules(
-    code: string,
-    filePath: string,
-    diff: string,
-    repoRules: CustomRule[] = []
-  ): Bug[] {
+  checkAgainstRules(code: string, filePath: string, diff: string): Bug[] {
     const bugs: Bug[] = [];
 
-    // Per-repo rules take highest priority, followed by global rules
-    const allRules = [...repoRules, ...this.rules];
-
-    for (const rule of allRules) {
+    for (const rule of this.rules) {
       // "never" means this rule should never report a bug — skip entirely
       if (rule.checkType === "never") {
         continue;
@@ -240,7 +88,11 @@ export class CustomRulesManager {
           fileRegex = new RegExp(rule.filePattern, "i");
         } catch (error) {
           logger.warn(
-            `Invalid filePattern regex in rule ${rule.id} ("${rule.filePattern}"): ${error instanceof Error ? error.message : String(error)} — skipping rule`
+            `Invalid filePattern regex in rule ${rule.id} ("${
+              rule.filePattern
+            }"): ${
+              error instanceof Error ? error.message : String(error)
+            } — skipping rule`
           );
           continue;
         }
@@ -283,7 +135,9 @@ export class CustomRulesManager {
             });
           }
         } catch (error) {
-          logger.debug(`Invalid regex pattern in rule ${rule.id}: ${rule.pattern}`);
+          logger.debug(
+            `Invalid regex pattern in rule ${rule.id}: ${rule.pattern}`
+          );
         }
         continue;
       }
@@ -309,7 +163,9 @@ export class CustomRulesManager {
             }
           }
         } catch (error) {
-          logger.debug(`Invalid regex pattern in rule ${rule.id}: ${rule.pattern}`);
+          logger.debug(
+            `Invalid regex pattern in rule ${rule.id}: ${rule.pattern}`
+          );
         }
       }
     }
@@ -330,7 +186,11 @@ export class CustomRulesManager {
   // Check if a line is new code (in diff)
   // ============================================================
 
-  private isNewCodeLine(diff: string, filePath: string, lineNumber: number): boolean {
+  private isNewCodeLine(
+    diff: string,
+    filePath: string,
+    lineNumber: number
+  ): boolean {
     const diffLines = diff.split("\n");
     let inTargetFile = false;
     let currentNewLine = 0;
@@ -339,7 +199,8 @@ export class CustomRulesManager {
     for (const line of diffLines) {
       // Check for file header
       if (line.startsWith("diff --git")) {
-        inTargetFile = line.includes(` b/${filePath}`) || line.includes(` ${filePath}`);
+        inTargetFile =
+          line.includes(` b/${filePath}`) || line.includes(` ${filePath}`);
         continue;
       }
 
@@ -388,20 +249,17 @@ export class CustomRulesManager {
   }
 
   // ============================================================
-  // Format rules for prompt inclusion.
-  // additionalRules: per-repo rules to prepend (highest priority).
+  // Format rules for prompt inclusion
   // ============================================================
 
-  formatRulesForPrompt(additionalRules: CustomRule[] = []): string {
-    const allRules = [...additionalRules, ...this.rules];
-
-    if (allRules.length === 0) {
+  formatRulesForPrompt(): string {
+    if (this.rules.length === 0) {
       return "";
     }
 
-    const lines: string[] = ["## Project-Specific Rules to Check", ""];
+    const lines: string[] = ["## Built-in Rules to Check", ""];
 
-    for (const rule of allRules) {
+    for (const rule of this.rules) {
       lines.push(`### ${rule.title} (Severity: ${rule.severity})`);
       lines.push(rule.description);
       if (rule.pattern) {
