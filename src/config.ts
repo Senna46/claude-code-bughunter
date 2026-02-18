@@ -61,7 +61,7 @@ export function loadConfig(): Config {
         `Either increase BUGHUNTER_ANALYSIS_PASSES to at least ${voteThreshold}, or decrease BUGHUNTER_VOTE_THRESHOLD to at most ${analysisPasses}.`
     );
   }
-  const enableValidator = process.env.BUGHUNTER_ENABLE_VALIDATOR?.trim().toLowerCase() === "true";
+  const enableValidator = process.env.BUGHUNTER_ENABLE_VALIDATOR?.trim().toLowerCase() !== "false";
   const validatorModel = process.env.BUGHUNTER_VALIDATOR_MODEL?.trim() || null;
 
   // Agentic analysis settings
