@@ -363,22 +363,7 @@ ${SUMMARY_MARKER_END}`;
     // Include fallback bug details in the review body so they are
     // not posted as a separate issue comment
     const fallbackSections = fallbackBugs
-      .map((bug) => {
-        const severityBadge = this.formatSeverityBadge(bug.severity);
-        const location = bug.startLine
-          ? `\`${bug.filePath}#L${bug.startLine}${bug.endLine ? `-L${bug.endLine}` : ""}\``
-          : `\`${bug.filePath}\``;
-
-        return `### ${bug.title}
-
-${severityBadge}
-
-${BUG_ID_PREFIX} ${bug.id} -->
-
-**Location:** ${location}
-
-${bug.description}`;
-      })
+      .map((bug) => this.formatBugSection(bug))
       .join("\n\n---\n\n");
 
     return `${headerLine}
@@ -410,19 +395,13 @@ ${bug.description}`;
     return labels[severity];
   }
 
-  // Fallback: post all bugs as a single issue comment
-  private async postBugsAsIssueComment(
-    pr: PullRequest,
-    analysis: AnalysisResult
-  ): Promise<void> {
-    const bugSections = analysis.bugs
-      .map((bug) => {
-        const severityBadge = this.formatSeverityBadge(bug.severity);
-        const location = bug.startLine
-          ? `\`${bug.filePath}#L${bug.startLine}${bug.endLine ? `-L${bug.endLine}` : ""}\``
-          : `\`${bug.filePath}\``;
+  private formatBugSection(bug: Bug): string {
+    const severityBadge = this.formatSeverityBadge(bug.severity);
+    const location = bug.startLine
+      ? `\`${bug.filePath}#L${bug.startLine}${bug.endLine ? `-L${bug.endLine}` : ""}\``
+      : `\`${bug.filePath}\``;
 
-        return `### ${bug.title}
+    return `### ${bug.title}
 
 ${severityBadge}
 
@@ -431,7 +410,15 @@ ${BUG_ID_PREFIX} ${bug.id} -->
 **Location:** ${location}
 
 ${bug.description}`;
-      })
+  }
+
+  // Fallback: post all bugs as a single issue comment
+  private async postBugsAsIssueComment(
+    pr: PullRequest,
+    analysis: AnalysisResult
+  ): Promise<void> {
+    const bugSections = analysis.bugs
+      .map((bug) => this.formatBugSection(bug))
       .join("\n\n---\n\n");
 
     const body = `Claude Code BugHunter found **${analysis.bugs.length} potential issue(s)** in commit \`${analysis.commitSha.substring(0, 7)}\`:
