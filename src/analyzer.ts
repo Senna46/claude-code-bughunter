@@ -10,7 +10,7 @@ import { randomUUID } from "crypto";
 
 import { logger } from "./logger.js";
 import {
-  createBugSimilarityKey,
+  createBugSimilarityKeys,
   type AnalysisResult,
   type Bug,
   type BugRecord,
@@ -351,8 +351,11 @@ export class Analyzer {
       return [];
     }
 
-    // Collect all bugs from all passes and group similar ones
+    // Collect all bugs from all passes and group similar ones.
+    // keyAlias maps every candidate key (primary + shifted) to the canonical key
+    // stored in bugVotes, so that boundary-straddling reports are merged correctly.
     const bugVotes = new Map<string, BugWithVotes>();
+    const keyAlias = new Map<string, string>();
 
     for (const result of successfulResults) {
       for (const bugData of result.output.bugs) {
@@ -366,22 +369,38 @@ export class Analyzer {
           endLine: bugData.endLine ?? null,
         };
 
-        // Create a key for similarity matching
-        const similarityKey = createBugSimilarityKey(bug);
+        // Generate primary + optional shifted key to tolerate bucket-boundary splits
+        const candidateKeys = createBugSimilarityKeys(bug);
 
-        if (bugVotes.has(similarityKey)) {
-          const existing = bugVotes.get(similarityKey)!;
+        // Find any existing canonical key via the alias map
+        let canonicalKey: string | undefined;
+        for (const key of candidateKeys) {
+          const alias = keyAlias.get(key);
+          if (alias !== undefined) {
+            canonicalKey = alias;
+            break;
+          }
+        }
+
+        if (canonicalKey !== undefined) {
+          const existing = bugVotes.get(canonicalKey)!;
           // Only count one vote per pass to ensure voteThreshold requires independent agreement
           if (!existing.passIndices.includes(result.passIndex)) {
             existing.voteCount++;
             existing.passIndices.push(result.passIndex);
           }
         } else {
-          bugVotes.set(similarityKey, {
+          // New entry: register the first candidate key as canonical
+          canonicalKey = candidateKeys[0];
+          bugVotes.set(canonicalKey, {
             bug,
             voteCount: 1,
             passIndices: [result.passIndex],
           });
+          // Register all candidate keys as aliases pointing to the canonical key
+          for (const key of candidateKeys) {
+            keyAlias.set(key, canonicalKey);
+          }
         }
       }
     }

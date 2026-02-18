@@ -19,7 +19,7 @@ import { PrMonitor } from "./prMonitor.js";
 import type { PrWithNewCommits } from "./prMonitor.js";
 import { StateStore } from "./state.js";
 import {
-  createBugSimilarityKey,
+  createBugSimilarityKeys,
   type Bug,
   type BugRecord,
   type Config,
@@ -611,13 +611,24 @@ class BugHunterDaemon {
 
   private mergeBugResults(bugs1: Bug[], bugs2: Bug[]): Bug[] {
     const merged: Bug[] = [...bugs1];
-    const seenKeys = new Set(bugs1.map((b) => createBugSimilarityKey(b)));
+
+    // Seed seenKeys with all candidate keys (primary + shifted) from bugs1
+    // so that boundary-adjacent duplicates in bugs2 are correctly detected.
+    const seenKeys = new Set<string>();
+    for (const b of bugs1) {
+      for (const key of createBugSimilarityKeys(b)) {
+        seenKeys.add(key);
+      }
+    }
 
     for (const bug of bugs2) {
-      const key = createBugSimilarityKey(bug);
-      if (!seenKeys.has(key)) {
+      const candidateKeys = createBugSimilarityKeys(bug);
+      const alreadySeen = candidateKeys.some((k) => seenKeys.has(k));
+      if (!alreadySeen) {
         merged.push(bug);
-        seenKeys.add(key);
+        for (const key of candidateKeys) {
+          seenKeys.add(key);
+        }
       }
     }
 

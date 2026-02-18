@@ -83,16 +83,40 @@ export interface Bug {
 const LINE_BUCKET_SIZE = 5;
 const TITLE_SIMILARITY_LENGTH = 50;
 
-// Shared deduplication key for Bug instances.
-// Used by both majority voting (Analyzer) and agentic merge (BugHunterDaemon)
-// to identify similar bugs by normalized file path, approximate line location, and title prefix.
-export function createBugSimilarityKey(bug: Bug): string {
+// Returns all candidate similarity keys for a Bug.
+// Two keys are generated when the line falls near a bucket boundary:
+//   1. Primary key   – based on Math.floor(line / bucketSize)
+//   2. Shifted key   – based on Math.floor((line + bucketSize/2) / bucketSize)
+// This ensures that two passes reporting the same bug at adjacent lines that
+// straddle a boundary (e.g. lines 9 and 10 with bucket size 5) share at least
+// one key and their votes are correctly merged.
+export function createBugSimilarityKeys(bug: Bug): string[] {
   const normalizedTitle = bug.title.toLowerCase().trim();
   const normalizedFile = bug.filePath.toLowerCase().trim();
-  const lineBucket = bug.startLine
-    ? Math.floor(bug.startLine / LINE_BUCKET_SIZE)
-    : 0;
-  return `${normalizedFile}:${lineBucket}:${normalizedTitle.substring(0, TITLE_SIMILARITY_LENGTH)}`;
+  const titlePrefix = normalizedTitle.substring(0, TITLE_SIMILARITY_LENGTH);
+
+  if (!bug.startLine) {
+    return [`${normalizedFile}:0:${titlePrefix}`];
+  }
+
+  const primaryBucket = Math.floor(bug.startLine / LINE_BUCKET_SIZE);
+  const shiftedBucket = Math.floor(
+    (bug.startLine + Math.floor(LINE_BUCKET_SIZE / 2)) / LINE_BUCKET_SIZE
+  );
+  const primaryKey = `${normalizedFile}:${primaryBucket}:${titlePrefix}`;
+
+  if (shiftedBucket !== primaryBucket) {
+    const shiftedKey = `${normalizedFile}:${shiftedBucket}:${titlePrefix}`;
+    return [primaryKey, shiftedKey];
+  }
+
+  return [primaryKey];
+}
+
+// Convenience wrapper returning only the primary similarity key.
+// Prefer createBugSimilarityKeys when boundary-tolerant matching is needed.
+export function createBugSimilarityKey(bug: Bug): string {
+  return createBugSimilarityKeys(bug)[0];
 }
 
 export interface AnalysisResult {
