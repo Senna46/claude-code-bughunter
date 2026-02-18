@@ -17,7 +17,6 @@ import { DynamicContextManager } from "./dynamicContext.js";
 import { FixGenerator } from "./fixGenerator.js";
 import { GitHubClient } from "./githubClient.js";
 import { logger, setLogLevel } from "./logger.js";
-import { MetricsManager } from "./metrics.js";
 import { PrMonitor } from "./prMonitor.js";
 import type { PrWithNewCommits } from "./prMonitor.js";
 import { StateStore } from "./state.js";
@@ -42,7 +41,6 @@ class BugHunterDaemon {
   private approvalHandler!: ApprovalHandler;
   private validator: BugValidator;
   private customRulesManager: CustomRulesManager;
-  private metricsManager: MetricsManager;
   private isShuttingDown = false;
 
   constructor(config: Config) {
@@ -53,7 +51,6 @@ class BugHunterDaemon {
     this.fixGenerator = new FixGenerator(config);
     this.validator = new BugValidator(config);
     this.customRulesManager = new CustomRulesManager(config);
-    this.metricsManager = new MetricsManager(config);
   }
 
   // ============================================================
