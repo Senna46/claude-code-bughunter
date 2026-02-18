@@ -295,7 +295,7 @@ export class Analyzer {
     
     // Simple seeded random number generator
     const random = () => {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
       return seed / 0x80000000;
     };
 
