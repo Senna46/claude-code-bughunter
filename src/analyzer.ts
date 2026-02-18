@@ -170,6 +170,7 @@ export class Analyzer {
         bugs: [],
         overview: "All analysis passes failed.",
         summary: "All analysis passes failed.",
+        rawSummary: "All analysis passes failed.",
         riskLevel: "low",
         commitSha,
         analyzedAt: new Date().toISOString(),
@@ -434,6 +435,7 @@ export class Analyzer {
         bugs: [],
         overview: "All analysis passes failed.",
         summary: "All analysis passes failed.",
+        rawSummary: "All analysis passes failed.",
         riskLevel: "low",
         commitSha,
         analyzedAt: new Date().toISOString(),
@@ -450,7 +452,11 @@ export class Analyzer {
     return {
       bugs: votedBugs,
       overview: firstResult.overview,
+      // summary is the display string with voting prefix; rawSummary preserves the
+      // original Claude text so buildAnalysisMeta callers can pass it without
+      // re-prepending the voting prefix a second time.
       summary: this.buildSummaryFromVotedBugs(votedBugs, firstResult.summary),
+      rawSummary: firstResult.summary,
       riskLevel,
       commitSha,
       analyzedAt: new Date().toISOString(),

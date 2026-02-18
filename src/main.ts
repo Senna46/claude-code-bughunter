@@ -296,7 +296,9 @@ class BugHunterDaemon {
           // Merge results from both analyses
           const mergedBugs = this.mergeBugResults(analysis.bugs, agenticAnalysis.bugs);
           logger.info(`Agentic analysis merged: ${analysis.bugs.length} + ${agenticAnalysis.bugs.length} -> ${mergedBugs.length} bugs`);
-          const mergedMeta = this.analyzer.buildAnalysisMeta(mergedBugs, analysis.summary);
+          // Pass rawSummary (the original Claude text without voting prefix) so that
+          // buildAnalysisMeta does not double-prepend the "Found N bug(s)" prefix.
+          const mergedMeta = this.analyzer.buildAnalysisMeta(mergedBugs, analysis.rawSummary);
           analysis = {
             ...analysis,
             bugs: mergedBugs,
@@ -326,7 +328,9 @@ class BugHunterDaemon {
 
       // Update analysis with validated bugs, recomputing summary/riskLevel
       // so they reflect the final bug count rather than the pre-validation set.
-      const validatedMeta = this.analyzer.buildAnalysisMeta(validatedBugs, analysis.summary);
+      // Pass rawSummary (the original Claude text without voting prefix) so that
+      // buildAnalysisMeta does not double-prepend the "Found N bug(s)" prefix.
+      const validatedMeta = this.analyzer.buildAnalysisMeta(validatedBugs, analysis.rawSummary);
       const validatedAnalysis = {
         ...analysis,
         bugs: validatedBugs,

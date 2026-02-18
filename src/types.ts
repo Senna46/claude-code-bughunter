@@ -116,7 +116,12 @@ export function createBugSimilarityKeys(bug: Bug): string[] {
 export interface AnalysisResult {
   bugs: Bug[];
   overview: string;
+  // Processed summary with voting prefix prepended (e.g. "Found N bug(s) after majority voting: ...").
+  // Used for display purposes only.
   summary: string;
+  // Raw summary text returned directly by Claude, without any voting prefix.
+  // Pass this to buildAnalysisMeta so it does not double-prepend the prefix.
+  rawSummary: string;
   riskLevel: RiskLevel;
   commitSha: string;
   analyzedAt: string;
