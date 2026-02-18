@@ -9,12 +9,13 @@ import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 
 import { logger } from "./logger.js";
-import type {
-  AnalysisResult,
-  Bug,
-  BugRecord,
-  ClaudeAnalysisOutput,
-  Config,
+import {
+  createBugSimilarityKey,
+  type AnalysisResult,
+  type Bug,
+  type BugRecord,
+  type ClaudeAnalysisOutput,
+  type Config,
 } from "./types.js";
 
 // JSON schema for structured bug analysis output from claude -p
@@ -352,7 +353,7 @@ export class Analyzer {
         };
 
         // Create a key for similarity matching
-        const similarityKey = this.createBugSimilarityKey(bug);
+        const similarityKey = createBugSimilarityKey(bug);
 
         if (bugVotes.has(similarityKey)) {
           const existing = bugVotes.get(similarityKey)!;
@@ -379,22 +380,6 @@ export class Analyzer {
     }
 
     return votedBugs;
-  }
-
-  // ============================================================
-  // Create a similarity key for bug deduplication
-  // ============================================================
-
-  private createBugSimilarityKey(bug: Bug): string {
-    // Normalize the bug for comparison
-    const normalizedTitle = bug.title.toLowerCase().trim();
-    const normalizedFile = bug.filePath.toLowerCase().trim();
-    
-    // Include approximate line location (within 5 lines)
-    const lineBucket = bug.startLine ? Math.floor(bug.startLine / 5) : 0;
-    
-    // Create a key that groups similar bugs
-    return `${normalizedFile}:${lineBucket}:${normalizedTitle.substring(0, 50)}`;
   }
 
   // ============================================================

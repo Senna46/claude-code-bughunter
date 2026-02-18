@@ -80,6 +80,21 @@ export interface Bug {
   endLine: number | null;
 }
 
+const LINE_BUCKET_SIZE = 5;
+const TITLE_SIMILARITY_LENGTH = 50;
+
+// Shared deduplication key for Bug instances.
+// Used by both majority voting (Analyzer) and agentic merge (BugHunterDaemon)
+// to identify similar bugs by normalized file path, approximate line location, and title prefix.
+export function createBugSimilarityKey(bug: Bug): string {
+  const normalizedTitle = bug.title.toLowerCase().trim();
+  const normalizedFile = bug.filePath.toLowerCase().trim();
+  const lineBucket = bug.startLine
+    ? Math.floor(bug.startLine / LINE_BUCKET_SIZE)
+    : 0;
+  return `${normalizedFile}:${lineBucket}:${normalizedTitle.substring(0, TITLE_SIMILARITY_LENGTH)}`;
+}
+
 export interface AnalysisResult {
   bugs: Bug[];
   overview: string;

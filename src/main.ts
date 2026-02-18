@@ -18,7 +18,13 @@ import { logger, setLogLevel } from "./logger.js";
 import { PrMonitor } from "./prMonitor.js";
 import type { PrWithNewCommits } from "./prMonitor.js";
 import { StateStore } from "./state.js";
-import type { Bug, BugRecord, Config, PullRequest } from "./types.js";
+import {
+  createBugSimilarityKey,
+  type Bug,
+  type BugRecord,
+  type Config,
+  type PullRequest,
+} from "./types.js";
 import { BugValidator } from "./validator.js";
 
 class BugHunterDaemon {
@@ -598,10 +604,10 @@ class BugHunterDaemon {
 
   private mergeBugResults(bugs1: Bug[], bugs2: Bug[]): Bug[] {
     const merged: Bug[] = [...bugs1];
-    const seenKeys = new Set(bugs1.map((b) => this.createBugKey(b)));
+    const seenKeys = new Set(bugs1.map((b) => createBugSimilarityKey(b)));
 
     for (const bug of bugs2) {
-      const key = this.createBugKey(bug);
+      const key = createBugSimilarityKey(bug);
       if (!seenKeys.has(key)) {
         merged.push(bug);
         seenKeys.add(key);
@@ -609,13 +615,6 @@ class BugHunterDaemon {
     }
 
     return merged;
-  }
-
-  private createBugKey(bug: Bug): string {
-    const normalizedTitle = bug.title.toLowerCase().trim();
-    const normalizedFile = bug.filePath.toLowerCase().trim();
-    const lineBucket = bug.startLine ? Math.floor(bug.startLine / 5) : 0;
-    return `${normalizedFile}:${lineBucket}:${normalizedTitle.substring(0, 50)}`;
   }
 }
 
