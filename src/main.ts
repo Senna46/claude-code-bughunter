@@ -6,7 +6,7 @@
 //   each polling cycle. Graceful shutdown on SIGINT/SIGTERM.
 
 import { AgenticAnalyzer } from "./agenticAnalyzer.js";
-import { Analyzer } from "./analyzer.js";
+import { Analyzer, extractChangedFilePaths } from "./analyzer.js";
 import { ApprovalHandler } from "./approvalHandler.js";
 import { Commenter } from "./commenter.js";
 import { loadConfig } from "./config.js";
@@ -299,7 +299,7 @@ class BugHunterDaemon {
       } else {
         // Fall back to pre-fetching all changed files
         // Parallelize independent HTTP requests to reduce total latency
-        const changedFilePaths = this.analyzer.extractChangedFilePaths(diff);
+        const changedFilePaths = extractChangedFilePaths(diff);
         fileContents = new Map<string, string>();
         const fileContentResults = await Promise.allSettled(
           changedFilePaths.map((filePath) =>

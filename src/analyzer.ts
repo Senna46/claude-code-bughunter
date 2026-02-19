@@ -681,14 +681,6 @@ export class Analyzer {
   }
 
   // ============================================================
-  // Extract changed file paths from a diff
-  // ============================================================
-
-  extractChangedFilePaths(diff: string): string[] {
-    return extractChangedFilePaths(diff);
-  }
-
-  // ============================================================
   // Truncate file contents to stay within the configured limit
   // ============================================================
 
