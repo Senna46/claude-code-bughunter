@@ -14,9 +14,36 @@ export interface Config {
   autofixMode: AutofixMode;
   workDir: string;
   maxDiffSize: number;
+  maxFileContextSize: number;
   claudeModel: string | null;
   logLevel: LogLevel;
   dbPath: string;
+  // Parallel analysis settings (inspired by Cursor Bugbot)
+  analysisPasses: number;
+  voteThreshold: number;
+  enableValidator: boolean;
+  validatorModel: string | null;
+  // Agentic analysis settings
+  enableAgenticAnalysis: boolean;
+  agenticMaxTurns: number;
+  // Dynamic context discovery settings
+  enableDynamicContext: boolean;
+  dynamicContextMaxFiles: number;
+  dynamicContextMaxLines: number;
+}
+
+// ============================================================
+// Custom Rules
+// ============================================================
+
+export interface CustomRule {
+  id: string;
+  title: string;
+  description: string;
+  severity: BugSeverity;
+  pattern?: string;
+  filePattern?: string;
+  checkType: "always" | "never" | "must-contain" | "must-not-contain";
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -71,10 +98,66 @@ export interface Bug {
   endLine: number | null;
 }
 
+const LINE_BUCKET_SIZE = 5;
+const TITLE_SIMILARITY_LENGTH = 50;
+
+// Returns all candidate similarity keys for a Bug.
+// Two key types are used:
+//   1. Primary key  – based on Math.floor(line / bucketSize)
+//   2. Shifted key  – based on Math.floor((line + bucketSize/2) / bucketSize)
+//                     emitted only when it differs from the primary key, to handle
+//                     cases where two passes report the same bug at adjacent lines
+//                     that straddle a bucket boundary (e.g. lines 9 and 10).
+// When startLine is null, only the null-sentinel key ("file:null:titlePrefix") is
+// returned.
+//
+// The null-sentinel key is NOT included for bugs with a known startLine.
+// Callers that need cross-matching between line-based and null-line bugs should
+// use createNullSentinelKey() and manage the alias/dedup logic themselves.
+// This prevents two genuinely different line-based bugs in the same file with
+// similar title prefixes from being incorrectly aliased together.
+export function createBugSimilarityKeys(bug: Bug): string[] {
+  const normalizedTitle = bug.title.toLowerCase().trim();
+  const normalizedFile = bug.filePath.toLowerCase().trim();
+  const titlePrefix = normalizedTitle.substring(0, TITLE_SIMILARITY_LENGTH);
+
+  if (bug.startLine === null) {
+    return [`${normalizedFile}:null:${titlePrefix}`];
+  }
+
+  const primaryBucket = Math.floor(bug.startLine / LINE_BUCKET_SIZE);
+  const shiftedBucket = Math.floor(
+    (bug.startLine + Math.floor(LINE_BUCKET_SIZE / 2)) / LINE_BUCKET_SIZE
+  );
+  const primaryKey = `${normalizedFile}:${primaryBucket}:${titlePrefix}`;
+
+  if (shiftedBucket !== primaryBucket) {
+    const shiftedKey = `${normalizedFile}:${shiftedBucket}:${titlePrefix}`;
+    return [primaryKey, shiftedKey];
+  }
+
+  return [primaryKey];
+}
+
+// Returns the null-sentinel key for any bug regardless of its startLine.
+// Used by callers to explicitly register cross-matching aliases between
+// line-based and null-line reports of the same bug.
+export function createNullSentinelKey(bug: Bug): string {
+  const normalizedTitle = bug.title.toLowerCase().trim();
+  const normalizedFile = bug.filePath.toLowerCase().trim();
+  const titlePrefix = normalizedTitle.substring(0, TITLE_SIMILARITY_LENGTH);
+  return `${normalizedFile}:null:${titlePrefix}`;
+}
+
 export interface AnalysisResult {
   bugs: Bug[];
   overview: string;
+  // Processed summary with voting prefix prepended (e.g. "Found N bug(s) after majority voting: ...").
+  // Used for display purposes only.
   summary: string;
+  // Raw summary text returned directly by Claude, without any voting prefix.
+  // Pass this to buildAnalysisMeta so it does not double-prepend the prefix.
+  rawSummary: string;
   riskLevel: RiskLevel;
   commitSha: string;
   analyzedAt: string;

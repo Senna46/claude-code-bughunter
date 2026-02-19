@@ -511,6 +511,49 @@ export class GitHubClient {
   }
 
   // ============================================================
+  // File Contents
+  // ============================================================
+
+  async getFileContent(
+    owner: string,
+    repo: string,
+    path: string,
+    ref: string
+  ): Promise<string | null> {
+    logger.debug("Fetching file content.", { owner, repo, path, ref: ref.substring(0, 10) });
+
+    try {
+      const { data } = await this.octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path,
+        ref,
+      });
+
+      // getContent returns file data with content as base64 when it's a file
+      if ("content" in data && typeof data.content === "string") {
+        return Buffer.from(data.content, "base64").toString("utf-8");
+      }
+
+      // If it's a directory or symlink, we can't get content
+      logger.debug("Path is not a regular file, skipping.", { owner, repo, path });
+      return null;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      // 404 is expected for deleted files
+      logger.debug("Failed to fetch file content (file may not exist).", {
+        owner,
+        repo,
+        path,
+        ref: ref.substring(0, 10),
+        error: message,
+      });
+      return null;
+    }
+  }
+
+  // ============================================================
   // Review Threads (GraphQL)
   // ============================================================
 

@@ -173,7 +173,7 @@ export class FixGenerator {
   // Repository cloning and management
   // ============================================================
 
-  private async ensureRepoClone(pr: PullRequest): Promise<string> {
+  async ensureRepoClone(pr: PullRequest): Promise<string> {
     await mkdir(this.config.workDir, { recursive: true });
 
     const repoDir = join(this.config.workDir, pr.owner, pr.repo);
@@ -199,6 +199,10 @@ export class FixGenerator {
     }
 
     return repoDir;
+  }
+
+  async checkoutRef(repoDir: string, ref: string): Promise<void> {
+    await this.execGit(repoDir, ["checkout", "--force", "--detach", ref]);
   }
 
   // ============================================================
