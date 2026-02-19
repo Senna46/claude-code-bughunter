@@ -236,7 +236,7 @@ Determine if this is a real bug that should be reported. Respond with structured
     startLine: number | null,
     endLine: number | null
   ): string | null {
-    if (!startLine) {
+    if (startLine === null) {
       return null;
     }
 
@@ -244,7 +244,7 @@ Determine if this is a real bug that should be reported. Respond with structured
     const contextLines = 10; // Lines of context before and after
 
     const start = Math.max(0, startLine - contextLines - 1);
-    const end = endLine
+    const end = endLine !== null
       ? Math.min(lines.length, endLine + contextLines)
       : Math.min(lines.length, startLine + contextLines);
 
