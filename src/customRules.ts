@@ -44,7 +44,7 @@ const DEFAULT_RULES: CustomRule[] = [
     description:
       "Using 'any' type defeats TypeScript's type checking. Consider using a more specific type or 'unknown' with type guards.",
     severity: "medium",
-    pattern: ":\\s*any",
+    pattern: ":\\s*any\\b",
     checkType: "must-not-contain",
   },
   {
