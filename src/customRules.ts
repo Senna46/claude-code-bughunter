@@ -104,7 +104,7 @@ export class CustomRulesManager {
       if (rule.checkType === "always") {
         // Report a bug unconditionally for any file that matches filePattern (or all files if no filePattern)
         bugs.push({
-          id: `rule-${rule.id}-always`,
+          id: `rule-${rule.id}-${filePath}-always`,
           title: rule.title,
           severity: rule.severity,
           description: rule.description,
@@ -125,7 +125,7 @@ export class CustomRulesManager {
           const hasMatch = regex.test(code);
           if (!hasMatch) {
             bugs.push({
-              id: `rule-${rule.id}-missing`,
+              id: `rule-${rule.id}-${filePath}-missing`,
               title: rule.title,
               severity: rule.severity,
               description: `${rule.description}\n\nRequired pattern not found: ${rule.pattern}`,
@@ -152,7 +152,7 @@ export class CustomRulesManager {
             const lineNumber = this.getLineNumber(code, match.index || 0);
             if (this.isNewCodeLine(diff, filePath, lineNumber)) {
               bugs.push({
-                id: `rule-${rule.id}-${lineNumber}`,
+                id: `rule-${rule.id}-${filePath}-${lineNumber}`,
                 title: rule.title,
                 severity: rule.severity,
                 description: `${rule.description}\n\nMatched pattern: ${rule.pattern}`,
