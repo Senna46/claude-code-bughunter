@@ -5,8 +5,6 @@
 // Limitations: Single-threaded; processes PRs sequentially within
 //   each polling cycle. Graceful shutdown on SIGINT/SIGTERM.
 
-import { join } from "path";
-
 import { AgenticAnalyzer } from "./agenticAnalyzer.js";
 import { Analyzer } from "./analyzer.js";
 import { ApprovalHandler } from "./approvalHandler.js";
@@ -343,7 +341,8 @@ class BugHunterDaemon {
       if (this.config.enableAgenticAnalysis) {
         logger.info("Running agentic analysis for deeper investigation...");
         try {
-          const repoPath = join(this.config.workDir, pr.owner, pr.repo);
+          const repoPath = await this.fixGenerator.ensureRepoClone(pr);
+          await this.fixGenerator.checkoutRef(repoPath, pr.headSha);
           const agenticAnalysis = await this.agenticAnalyzer.analyzeDiff(
             diff,
             pr.title,
