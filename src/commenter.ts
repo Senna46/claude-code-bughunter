@@ -82,10 +82,10 @@ export class Commenter {
     const commitShort = analysis.commitSha.substring(0, 7);
     const commitUrl = `https://github.com/${pr.owner}/${pr.repo}/commit/${analysis.commitSha}`;
 
-    const bugCountText =
-      analysis.bugs.length > 0
-        ? `Found **${analysis.bugs.length} potential issue(s)**.`
-        : "No issues found.";
+    // When bugs exist, analysis.summary already contains the count via buildSummaryFromVotedBugs
+    // (e.g. "Found 3 bug(s) after majority voting: 1 high, 2 medium severity. ..."),
+    // so bugCountText is only needed for the zero-bug case.
+    const noBugsText = "No issues found.";
 
     // Build bug summary section if there are bugs
     const bugSummarySection =
@@ -93,11 +93,9 @@ export class Commenter {
         ? `>
 > **Bugs Found**
 > ${analysis.summary}
->
-> ${bugCountText}
 `
         : `>
-> ${bugCountText}
+> ${noBugsText}
 `;
 
     return `${SUMMARY_MARKER_START}
