@@ -260,7 +260,7 @@ export class Analyzer {
     const variants: string[] = [];
     for (let i = 0; i < numVariants; i++) {
       // Create a shuffled copy with a different seed each time
-      const shuffled = this.shuffleArrayWithSeed([...fileHunks], i);
+      const shuffled = this.shuffleArrayWithSeed([...fileHunks], i + 1);
       variants.push(shuffled.join("\n"));
     }
 
